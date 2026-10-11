@@ -1,7 +1,5 @@
-#define u8  unsigned char
-#define u16 unsigned short
-#define u32 unsigned int
-#define u64 unsigned long long
+#include "boot_common.h"
+#include "com.h"
 
 #define IDT_GATE_INT32   0xE    /* 32-bit interrupt gate: IF cleared on entry */
 #define IDT_GATE_TRAP32  0xF    /* 32-bit trap gate: IF left alone            */
@@ -81,50 +79,17 @@ void interrupt_init(void)
     idt_load();
 }
 
-/* COM1, already set up by serial_init in boot.S.  LSR lives at 0x3FD, the
- * transmit register at 0x3F8: polling the data port for THR-empty never
- * succeeds and hangs the handler. */
-#define COM1_THR  0x3F8
-#define COM1_LSR  0x3FD
-
-static void com1_putc(u8 c)
-{
-    u16 data = COM1_THR, status = COM1_LSR;
-    u8 lsr;
-
-    do {
-        __asm__ __volatile__ ("inb %1, %0" : "=a"(lsr) : "d"(status));
-    } while (!(lsr & 0x20));
-
-    __asm__ __volatile__ ("outb %0, %1" : : "a"(c), "d"(data));
-}
-
-static void com1_puts(const char *s)
-{
-    while (*s)
-        com1_putc((u8)*s++);
-}
-
-static void com1_hex(u32 value)
-{
-    static const char digits[] = "0123456789abcdef";
-    int shift;
-
-    for (shift = 28; shift >= 0; shift -= 4)
-        com1_putc((u8)digits[(value >> shift) & 0xF]);
-}
-
 /* Called from isr_common for every vector.  The vector number was pushed by
  * the slot itself, so this is the one place that knows what fired. */
 void isr_dispatch(isr_frame *f)
 {
-    com1_puts("isr vector=0x");
-    com1_hex(f->vector);
-    com1_puts(" err=0x");
-    com1_hex(f->err);
-    com1_puts(" eip=0x");
-    com1_hex(f->eip);
-    com1_puts(" cs=0x");
-    com1_hex(f->cs);
-    com1_puts("\r\n");
+    com_print("isr vector=0x");
+    com_hex(f->vector);
+    com_print(" err=0x");
+    com_hex(f->err);
+    com_print(" eip=0x");
+    com_hex(f->eip);
+    com_print(" cs=0x");
+    com_hex(f->cs);
+    com_print("\r\n");
 }

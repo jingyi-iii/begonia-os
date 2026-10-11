@@ -1,7 +1,4 @@
-#define u8  unsigned char
-#define u16 unsigned short
-#define u32 unsigned int
-#define u64 unsigned long long
+#include "boot_common.h"
 
 /* CR0 control bits. */
 #define CR0_PE          (1u << 0)   /* bit  0: Protection Enable -> enter protected mode */

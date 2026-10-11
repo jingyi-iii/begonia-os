@@ -18,8 +18,8 @@ CFLAGS  := -m32 -O2 -ffreestanding -fno-pic -fno-stack-protector -fno-builtin \
            -fno-asynchronous-unwind-tables -Wall -Wextra
 
 BUILD  := build
-OBJ    := $(BUILD)/boot.o $(BUILD)/protmode.o $(BUILD)/interrupt.o \
-          $(BUILD)/interrupt_asm.o
+OBJ    := $(BUILD)/boot.o $(BUILD)/protmode.o $(BUILD)/com.o \
+          $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o
 ELF    := $(BUILD)/boot.elf
 ISO    := $(BUILD)/boot.iso
 ISODIR := $(BUILD)/iso
@@ -36,6 +36,10 @@ $(BUILD)/boot.o: boot.S | $(BUILD)
 
 # protmode.c: protected-mode entry (GDT + CR0.PE).  See the header comment.
 $(BUILD)/protmode.o: protmode.c | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# com.c: the COM1 console, shared by boot.S and interrupt.c.
+$(BUILD)/com.o: com.c com.h boot_common.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # interrupt.c is the IDT, interrupt.S is the ISR entry points.

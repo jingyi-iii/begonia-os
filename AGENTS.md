@@ -6,8 +6,8 @@ built with the project's own cross toolchain and run under qemu.
 ## Layout
 
 - `bootloader/` — Multiboot v1 entry (32-bit protected mode: `boot.S`, `protmode.c`,
-  `interrupt.c`, `interrupt.S`, `linker.ld`, `Makefile`); builds to `build/boot.elf`, plus an
-  optional GRUB ISO `build/boot.iso`
+  `interrupt.c`, `interrupt.S`, `com.c`, `linker.ld`, `Makefile`); builds to `build/boot.elf`,
+  plus an optional GRUB ISO `build/boot.iso`
 - `kernel/` — the kernel (not implemented yet; it needs a `Makefile`)
 - `servers/` — servers (not implemented yet)
 - `tools/` — cross toolchain sources and build scripts
@@ -90,9 +90,11 @@ built with the project's own cross toolchain and run under qemu.
 - The Multiboot header (magic/flags/checksum) lives in its own `.multiboot` section, which
   `linker.ld` places first so it stays within the first 8 KiB of the file, as GRUB requires.
   Validate it with `grub-file --is-x86-multiboot build/boot.elf`.
-- GRUB/qemu enter `_start` directly in 32-bit protected mode, so BIOS calls are unavailable; the
-  code prints `BegoniaOS bootloader running` to COM1 by polling the 16550 UART at `0x3F8`
-  directly (115200 8N1) instead of using `int 14h`.
+- GRUB/qemu enter `_start` directly in 32-bit protected mode, so BIOS calls are unavailable;
+  the messages go to COM1 instead of through `int 14h`.  That is `com.c` (`com_init`,
+  `com_putc`, `com_print`, `com_hex`, declared in `com.h`), shared by `boot.S` and
+  `interrupt.c`.  It polls LSR at `0x3FD` before every byte - polling the data port at
+  `0x3F8` for "transmitter empty" never succeeds and hangs the caller.
 - After the message it writes to port `0x501`, so qemu exits by itself (`-device isa-debug-exit`;
   the exit code is `(value << 1) | 1`); on real hardware that write is ignored and it falls back
   to `cli; hlt`.
