@@ -188,9 +188,11 @@ the scope:
 <footer: BREAKING CHANGE: ..., Closes #12, Refs: ...>
 ```
 
+- **Keep it short**: subject plus two to four lines of body. Detail belongs in
+  `AGENTS.md`, in the code comments, or in the file that changed - not in the log.
 - `type`: `feat`, `fix`, `build`, `docs`, `refactor`, `perf`, `test`, `chore`, `ci`, `style`,
   `revert`
-- `scope`: `bootloader`, `kernel`, `servers`, `tools`, `run`, `docs`
+- `scope`: `bootloader`, `kernel`, `servers`, `tools`, `run`, `agents`, `docs`
 - One logical change per commit, and every commit must build (`./run.sh --32 all`).
 - Mark incompatible changes with `!` after the scope, or with a `BREAKING CHANGE:` footer.
 - `.gitmessage` holds the template and `git config commit.template .gitmessage` is set in this
