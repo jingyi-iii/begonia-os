@@ -1,0 +1,11 @@
+# The project is developed in WSL and built with bash / make: keep LF everywhere
+# so that a Windows editor on the same tree cannot introduce CRLF.
+* text=auto eol=lf
+
+# Shell scripts and assembly must stay byte-exact for the cross toolchain.
+*.sh   text eol=lf
+*.S    text eol=lf
+Makefile text eol=lf
+
+# Fetched source tarballs (never committed, see .gitignore)
+*.tar.* binary
