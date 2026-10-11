@@ -18,7 +18,8 @@ CFLAGS  := -m32 -O2 -ffreestanding -fno-pic -fno-stack-protector -fno-builtin \
            -fno-asynchronous-unwind-tables -Wall -Wextra
 
 BUILD  := build
-OBJ    := $(BUILD)/boot.o $(BUILD)/protmode.o
+OBJ    := $(BUILD)/boot.o $(BUILD)/protmode.o $(BUILD)/interrupt.o \
+          $(BUILD)/interrupt_asm.o
 ELF    := $(BUILD)/boot.elf
 ISO    := $(BUILD)/boot.iso
 ISODIR := $(BUILD)/iso
@@ -36,6 +37,15 @@ $(BUILD)/boot.o: boot.S | $(BUILD)
 # protmode.c: protected-mode entry (GDT + CR0.PE).  See the header comment.
 $(BUILD)/protmode.o: protmode.c | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+# interrupt.c is the IDT, interrupt.S is the ISR entry points.
+# The assembly object cannot be interrupt.o: interrupt.c owns that
+# name, so it is built as interrupt_asm.o from the same basename.
+$(BUILD)/interrupt.o: interrupt.c | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/interrupt_asm.o: interrupt.S | $(BUILD)
+	$(AS) $(ASFLAGS) -o $@ $<
 
 $(ELF): $(OBJ) linker.ld
 	$(LD) -m elf_i386 -T linker.ld -o $@ $(OBJ)

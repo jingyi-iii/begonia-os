@@ -1,0 +1,130 @@
+#define u8  unsigned char
+#define u16 unsigned short
+#define u32 unsigned int
+#define u64 unsigned long long
+
+#define IDT_GATE_INT32   0xE    /* 32-bit interrupt gate: IF cleared on entry */
+#define IDT_GATE_TRAP32  0xF    /* 32-bit trap gate: IF left alone            */
+
+typedef struct {
+    u16 limit;
+    u32 base;
+} __attribute__((packed)) idt_meta;
+
+typedef union {
+    u64 raw;
+    struct {
+        u32 isr_low   : 16;
+        u32 sel_code  : 16;
+        u32 reserved  : 8;      /* 0 on i686; IST lives here in long mode     */
+        u32 gate_type : 4;      /* IDT_GATE_INT32 / IDT_GATE_TRAP32           */
+        u32 s         : 1;      /* 0: a gate is a system descriptor, not code */
+        u32 dpl       : 2;      /* 0: ring 0 only                             */
+        u32 present   : 1;
+        u32 isr_high  : 16;
+    } __attribute__((packed));
+} idt_entry;
+
+/* What isr_common in interrupt.S leaves on the stack.  Keep in step
+ * with the layout comment at the top of that file. */
+typedef struct {
+    u32 edi, esi, ebp, esp, ebx, edx, ecx, eax;   /* pusha                  */
+    u32 vector, err;                              /* slot, then CPU or 0    */
+    u32 eip, cs, eflags;                          /* pushed by the CPU      */
+} isr_frame;
+
+_Static_assert(sizeof(isr_frame) == 52, "isr_frame must match interrupt.S");
+
+static idt_entry idt[256] = {0};
+static idt_meta g_idtmeta = {
+    .limit = sizeof(idt_entry) * 256 - 1,
+    .base = (u32)idt
+};
+
+static void idt_set_gate(u32 vector, u32 handler, u16 sel, u8 dpl)
+{
+    idt[vector] = (idt_entry){
+        .isr_low   = handler & 0xFFFF,
+        .isr_high  = handler >> 16,
+        .sel_code  = sel,
+        .gate_type = IDT_GATE_INT32,
+        .dpl       = dpl,
+        .present   = 1,
+    };
+}
+
+void idt_load(void)
+{
+    __asm__ __volatile__ ("lidt %0" : : "m"(g_idtmeta) : "memory");
+}
+
+/* The stub table in interrupt.S: ISR_COUNT slots of ISR_SLOT bytes each,
+ * so vector N is entered at isr_tbl + N * ISR_SLOT.  Keep both numbers in
+ * step with that file. */
+extern u8 isr_tbl[];
+#define ISR_SLOT        0x90    /* must match .set ISR_SLOT in interrupt.S */
+#define ISR_VECTORS     256     /* one gate per IDT entry                  */
+#define SEL_KERNEL_CODE 0x08    /* GDT[1], the flat kernel code segment    */
+
+/* Point every gate at its stub and hand the table to the CPU.  All 256
+ * vectors go in with DPL 0, so an exception or a stray IRQ lands in the
+ * stub table instead of triple-faulting.  A vector that user mode has to
+ * be able to call gets re-installed later with idt_set_gate(.., 3). */
+void interrupt_init(void)
+{
+    u32 vector;
+
+    for (vector = 0; vector < ISR_VECTORS; vector++)
+        idt_set_gate(vector, (u32)isr_tbl + vector * ISR_SLOT,
+                     SEL_KERNEL_CODE, 0);
+
+    idt_load();
+}
+
+/* COM1, already set up by serial_init in boot.S.  LSR lives at 0x3FD, the
+ * transmit register at 0x3F8: polling the data port for THR-empty never
+ * succeeds and hangs the handler. */
+#define COM1_THR  0x3F8
+#define COM1_LSR  0x3FD
+
+static void com1_putc(u8 c)
+{
+    u16 data = COM1_THR, status = COM1_LSR;
+    u8 lsr;
+
+    do {
+        __asm__ __volatile__ ("inb %1, %0" : "=a"(lsr) : "d"(status));
+    } while (!(lsr & 0x20));
+
+    __asm__ __volatile__ ("outb %0, %1" : : "a"(c), "d"(data));
+}
+
+static void com1_puts(const char *s)
+{
+    while (*s)
+        com1_putc((u8)*s++);
+}
+
+static void com1_hex(u32 value)
+{
+    static const char digits[] = "0123456789abcdef";
+    int shift;
+
+    for (shift = 28; shift >= 0; shift -= 4)
+        com1_putc((u8)digits[(value >> shift) & 0xF]);
+}
+
+/* Called from isr_common for every vector.  The vector number was pushed by
+ * the slot itself, so this is the one place that knows what fired. */
+void isr_dispatch(isr_frame *f)
+{
+    com1_puts("isr vector=0x");
+    com1_hex(f->vector);
+    com1_puts(" err=0x");
+    com1_hex(f->err);
+    com1_puts(" eip=0x");
+    com1_hex(f->eip);
+    com1_puts(" cs=0x");
+    com1_hex(f->cs);
+    com1_puts("\r\n");
+}

@@ -6,7 +6,8 @@ built with the project's own cross toolchain and run under qemu.
 ## Layout
 
 - `bootloader/` — Multiboot v1 entry (32-bit protected mode: `boot.S`, `protmode.c`,
-  `linker.ld`, `Makefile`); builds to `build/boot.elf`, plus an optional GRUB ISO `build/boot.iso`
+  `interrupt.c`, `interrupt.S`, `linker.ld`, `Makefile`); builds to `build/boot.elf`, plus an
+  optional GRUB ISO `build/boot.iso`
 - `kernel/` — the kernel (not implemented yet; it needs a `Makefile`)
 - `servers/` — servers (not implemented yet)
 - `tools/` — cross toolchain sources and build scripts
@@ -101,6 +102,29 @@ built with the project's own cross toolchain and run under qemu.
   `make run-iso` boots it from the emulated CD-ROM (`-cdrom -boot d`).
 - Output goes to serial only: under `-nographic` qemu mirrors COM1 to stdio, while direct VGA
   text writes would not be visible.
+
+## Interrupts
+
+- `interrupt.S` holds the stub table. `isr_tbl` is 256 slots of 0x90 bytes, one per IDT vector, so
+  a vector's entry point is `isr_tbl + vector * 0x90` and the C side needs no per-vector symbols.
+- Each slot is a 12-byte stub - `pushl $0` for the vectors the CPU brings no error code for,
+  `pushl $vector`, `jmp isr_common` - followed by NOP padding. The padding is computed with `.org`
+  from the slot index rather than from the stub length: gas relaxes `jmp` to its short form where it
+  fits, which would leave that one slot three bytes short and break the stride.
+- `isr_common` does `pusha`, hands the frame to `isr_dispatch()` and irets. The frame is
+  `struct isr_frame` in interrupt.c (52 bytes, held by a `_Static_assert`): pusha, then vector,
+  error code, eip, cs, eflags. Keep the two files in step.
+- `interrupt_init()` points all 256 gates at their slot with DPL 0 and loads the table with `lidt`;
+  `boot.S` calls it right after `switch_to_protect_mode`. A vector user mode must be able to call
+  (a syscall gate) is re-installed later with `idt_set_gate(..., 3)`.
+- `isr_dispatch()` logs `isr vector= err= eip= cs=` over COM1 and returns, so a trap (an `int n`,
+  `#BP`, `#OF`) continues where it left off. **A fault must not be returned from blindly**: the CPU
+  saves the faulting instruction, so `iret` runs it again and the log floods - #DE and #GP loop
+  forever. Either fix the cause and retry (what #PF is for) or do not return at all.
+- Only the pusha registers are saved, not DS/ES/FS/GS: everything still runs in ring 0 on the flat
+  GDT. Add push/pop ds/es/fs/gs plus a reload of 0x10 before user mode arrives.
+- `boot.S` raises `int 1` and `int 0x3F` on every boot, so the slots, the frame and `iret` stay
+  exercised. Both are traps and return.
 
 ## grub / xorriso
 
