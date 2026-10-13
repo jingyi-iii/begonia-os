@@ -18,7 +18,7 @@ CFLAGS  := -m32 -O2 -ffreestanding -fno-pic -fno-stack-protector -fno-builtin \
            -fno-asynchronous-unwind-tables -Wall -Wextra
 
 BUILD  := build
-OBJ    := $(BUILD)/boot.o $(BUILD)/protmode.o $(BUILD)/com.o \
+OBJ    := $(BUILD)/boot.o $(BUILD)/protmode.o $(BUILD)/com.o $(BUILD)/pic.o \
           $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o
 ELF    := $(BUILD)/boot.elf
 ISO    := $(BUILD)/boot.iso
@@ -40,6 +40,10 @@ $(BUILD)/protmode.o: protmode.c | $(BUILD)
 
 # com.c: the COM1 console, shared by boot.S and interrupt.c.
 $(BUILD)/com.o: com.c com.h boot_common.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# pic.c: the 8259 pair and the PIT.
+$(BUILD)/pic.o: pic.c pic.h boot_common.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # interrupt.c is the IDT, interrupt.S is the ISR entry points.

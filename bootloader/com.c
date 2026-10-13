@@ -10,18 +10,6 @@
 #define COM1_LCR  0x3FB     /* line control                          */
 #define COM1_LSR  0x3FD     /* line status: bit 5 = transmitter free */
 
-static inline void outb(u16 port, u8 value)
-{
-    __asm__ __volatile__ ("outb %0, %1" : : "a"(value), "d"(port));
-}
-
-static inline u8 inb(u16 port)
-{
-    u8 value;
-
-    __asm__ __volatile__ ("inb %1, %0" : "=a"(value) : "d"(port));
-    return value;
-}
 
 /* 115200 8N1, FIFOs on.  The 16550 is clocked at 1.8432 MHz and divides that
  * by 16 and then by the divisor: 1 gives 115200, 12 would give 9600. */

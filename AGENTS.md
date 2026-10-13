@@ -6,8 +6,8 @@ built with the project's own cross toolchain and run under qemu.
 ## Layout
 
 - `bootloader/` — Multiboot v1 entry (32-bit protected mode: `boot.S`, `protmode.c`,
-  `interrupt.c`, `interrupt.S`, `com.c`, `linker.ld`, `Makefile`); builds to `build/boot.elf`,
-  plus an optional GRUB ISO `build/boot.iso`
+  `interrupt.c`, `interrupt.S`, `com.c`, `pic.c`, `linker.ld`, `Makefile`); builds to
+  `build/boot.elf`, plus an optional GRUB ISO `build/boot.iso`
 - `kernel/` — the kernel (not implemented yet; it needs a `Makefile`)
 - `servers/` — servers (not implemented yet)
 - `tools/` — cross toolchain sources and build scripts
@@ -107,6 +107,11 @@ built with the project's own cross toolchain and run under qemu.
 
 ## Interrupts
 
+- `pic.c` owns the 8259 pair.  `interrupt_init()` calls `pic_remap()` (IRQ0..15 go to
+  vectors 0x20..0x2F; the firmware default 0x08.. collides with the CPU exceptions)
+  and `pic_mask_all()`.  **`pic_eoi(irq)` must end every IRQ handler**, or the 8259
+  keeps that priority and everything below it blocked.  `pit_init(hz)` programs
+  channel 0 of the PIT.
 - `interrupt.S` holds the stub table. `isr_tbl` is 256 slots of 0x90 bytes, one per IDT vector, so
   a vector's entry point is `isr_tbl + vector * 0x90` and the C side needs no per-vector symbols.
 - Each slot is a 12-byte stub - `pushl $0` for the vectors the CPU brings no error code for,

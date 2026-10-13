@@ -1,5 +1,6 @@
 #include "boot_common.h"
 #include "com.h"
+#include "pic.h"
 
 #define IDT_GATE_INT32   0xE    /* 32-bit interrupt gate: IF cleared on entry */
 #define IDT_GATE_TRAP32  0xF    /* 32-bit trap gate: IF left alone            */
@@ -75,6 +76,12 @@ void interrupt_init(void)
     for (vector = 0; vector < ISR_VECTORS; vector++)
         idt_set_gate(vector, (u32)isr_tbl + vector * ISR_SLOT,
                      SEL_KERNEL_CODE, 0);
+
+    /* The 8259s come out of the firmware at the BIOS default vectors
+     * (0x08..) with some lines open, so remap and mask them before
+     * anything can fire.  Interrupts are still off here. */
+    pic_remap();
+    pic_mask_all();
 
     idt_load();
 }
