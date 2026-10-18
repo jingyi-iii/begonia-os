@@ -27,6 +27,11 @@
 
 /* Loader state on entry: %eax = 0x2BADB002, %ebx = multiboot info address. */
 _start:
+    /* The loader hands us the magic in %eax and the multiboot info in
+     * %ebx.  Save them before anything else: the first call into C
+     * clobbers %eax, and no caller is obliged to keep %ebx either. */
+    movl    %eax,       boot_magic
+    movl    %ebx,       boot_mbi
     cli
     cld
     movl    $stack_top, %esp
@@ -77,6 +82,15 @@ code32_msg:
     .asciz  "Already in 32-bit protected mode\r\n"
 exit_msg:
     .asciz  "Exiting...\r\n"
+
+.section .data
+.align 4
+.global boot_magic
+boot_magic:
+    .long   0
+.global boot_mbi
+boot_mbi:
+    .long   0
 
 .section .bss, "aw", @nobits
 .align 16

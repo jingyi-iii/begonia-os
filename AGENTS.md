@@ -5,9 +5,17 @@ built with the project's own cross toolchain and run under qemu.
 
 ## Layout
 
-- `bootloader/` — Multiboot v1 entry (32-bit protected mode: `boot.S`, `protmode.c`,
-  `interrupt.c`, `interrupt.S`, `com.c`, `pic.c`, `linker.ld`, `Makefile`); builds to
-  `build/boot.elf`, plus an optional GRUB ISO `build/boot.iso`
+- `Makefile` — builds `build/boot.elf` (and the optional ISO) from `startup/`, `arch/` and
+  `include/`, and lays the image out with `linker.ld`; every path is relative to the top
+  of the tree
+- `linker.ld` — the load address (1 MiB), the section order and `ENTRY(_start)`;
+  `.multiboot` stays first so the header lands in the first 8 KiB
+- `startup/` — where execution starts: `boot.S`, the Multiboot entry point
+- `build/` — output, never committed
+- `arch/` — CPU-specific code, one directory per target (`i686/` now, `x86_64/` planned):
+  `gdt.c`, `interrupt.c` + `interrupt.S`, `pic.c`, `com.c`, and the headers that go
+  with them
+- `include/` — headers shared by more than one directory (`boot_common.h`)
 - `kernel/` — the kernel (not implemented yet; it needs a `Makefile`)
 - `servers/` — servers (not implemented yet)
 - `tools/` — cross toolchain sources and build scripts
@@ -18,7 +26,7 @@ built with the project's own cross toolchain and run under qemu.
   - `build-toolchain.sh` — script that builds the toolchain
   - `env.sh` — `source` it to put the toolchain on `PATH`
 - `run.sh` — top-level entry: asks which toolchain to use (32/64), builds it if missing, then
-  builds and runs the bootloader in `bootloader` via qemu
+  builds and runs the image in `startup` via qemu
 
 ## Toolchain
 
@@ -67,20 +75,24 @@ built with the project's own cross toolchain and run under qemu.
 - GNU's official mirrors are slow; `bash tools/fetch-packages.sh` restores the expected set from
   TUNA / GitHub and verifies every sha256. To add a package by hand, drop it into `packages/`
   named `name-version.tar.*` (the script matches them by glob) and list it in `fetch-packages.sh`.
-- **`tools/local/`, `tools/build/`, `bootloader/build/` and the `packages/` tarballs are never
+- **`tools/local/`, `tools/build/`, `build/` and the `packages/` tarballs are never
   committed** (`.gitignore` covers them): the prefix is several GB and `gcc-*.tar.xz` is over
   GitHub's 100 MiB per-file limit.
 - To change the `local/` prefix or the `packages/` path, edit `PREFIX` and each component's
   `fpath` at the top of `build-toolchain.sh`.
 
-## Bootloader
+## Startup
 
-- `bootloader/` builds a 32-bit Multiboot v1 ELF (`build/boot.elf`) loaded at 1 MiB. `boot.S` is
-  assembled with `$(TARGET)-as --32` and linked with `$(TARGET)-ld -m elf_i386`; there is no
-  512-byte boot sector and no `objcopy` step. Both toolchains can build it (the kernel itself is
-  still 32-bit, assembled with `--32`).
-- `protmode.c` is compiled into the same image with `$(TARGET)-gcc -m32
-  -ffreestanding -fno-pic -fno-stack-protector -fno-builtin`: it installs a flat
+- The image is a Multiboot OS image, so GRUB (or qemu) is the real boot loader and `boot.S` is
+  the entry point of the OS image - the first half of the kernel, not a loader.  Its first
+  two instructions save `%eax` (the magic) and `%ebx` (the multiboot info address) into
+  `boot_magic` and `boot_mbi`, before the first C call can clobber them.
+- The top-level `Makefile` builds a 32-bit Multiboot v1 ELF (`build/boot.elf`) loaded at 1 MiB.
+  `boot.S` is assembled with `$(TARGET)-as --32` and linked with `$(TARGET)-ld -m elf_i386`;
+  there is no 512-byte boot sector and no `objcopy` step. Both toolchains can build it (the
+  kernel itself is still 32-bit, assembled with `--32`).
+- `arch/i686/gdt.c` (the old `protmode.c`) is compiled into the same image with `$(TARGET)-gcc
+  -m32 -ffreestanding -fno-pic -fno-stack-protector -fno-builtin`: it installs a flat
   4 GiB GDT of its own (`lgdt` + segment reload + far jump) and then sets
   `CR0.PE` (**bit 0**) to be in protected mode. Never set `CR0.PG` (**bit 31**)
   there: with no page tables in `CR3` the next instruction fetch faults and, with
@@ -136,14 +148,14 @@ built with the project's own cross toolchain and run under qemu.
 ## grub / xorriso
 
 - Both **can be built from source**, but they are only needed for the GRUB `grub-mkrescue`
-  bootable-ISO path (the `bootloader` `iso` / `run-iso` targets):
+  bootable-ISO path (the `startup` `iso` / `run-iso` targets):
   - `xorriso` depends on `libisofs` + `libisoburn` + `libburn` (plus `libacl`, etc.);
   - building GRUB from source pulls in even more (freetype/fontconfig/gettext/fuse, etc.).
 - They are **host packaging tools**, not compiler-internal libraries, so they live on the OS
   runtime side and are better sourced from distro packages.
 - Lighter alternatives for a toy OS (can avoid grub/xorriso entirely):
   - give the kernel a multiboot header and boot directly with `qemu-system-i386 -kernel os.elf`
-    (this is what the `bootloader` `run` target does);
+    (this is what the `startup` `run` target does);
   - use **Limine** (official prebuilt binaries + the `limine` command);
   - use `genisoimage`/`mkisofs` instead of `xorriso`.
 - If a completely apt-free setup is required, the libraries/GRUB above can also be added to
@@ -199,7 +211,7 @@ the scope:
   `AGENTS.md`, in the code comments, or in the file that changed - not in the log.
 - `type`: `feat`, `fix`, `build`, `docs`, `refactor`, `perf`, `test`, `chore`, `ci`, `style`,
   `revert`
-- `scope`: `bootloader`, `kernel`, `servers`, `tools`, `run`, `agents`, `docs`
+- `scope`: `startup`, `kernel`, `servers`, `tools`, `run`, `agents`, `docs`
 - One logical change per commit, and every commit must build (`./run.sh --32 all`).
 - Mark incompatible changes with `!` after the scope, or with a `BREAKING CHANGE:` footer.
 - `.gitmessage` holds the template and `git config commit.template .gitmessage` is set in this
@@ -217,7 +229,7 @@ source tools/env.sh                              # use the toolchain in the curr
 
 ./run.sh                  # ask for the toolchain, build the kernel, launch qemu
 ./run.sh all              # build only
-./run.sh clean            # clean the bootloader build
+./run.sh clean            # clean the image build
 ./run.sh iso              # build the GRUB ISO (grub-mkrescue)
 ./run.sh run-iso          # boot the GRUB ISO from the emulated CD-ROM
 ```

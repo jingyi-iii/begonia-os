@@ -5,7 +5,7 @@ qemu.
 
 What exists today is one 32-bit Multiboot v1 image. GRUB or `qemu -kernel` hands control to it
 in protected mode, it installs its own flat GDT, sets `CR0.PE` and prints to COM1 before asking
-qemu to exit. The kernel and the servers are empty; this is a bootloader and a toolchain so far.
+qemu to exit. The kernel and the servers are empty; this is a startup image and a toolchain so far.
 
 Nothing is installed into the host to build it. `tools/build-toolchain.sh` compiles gcc 16.2.0,
 binutils 2.46.0 and gdb 17.2 from the tarballs in `tools/packages/` into `tools/local`, a
@@ -14,7 +14,10 @@ toolchain can share the same prefix.
 
 | Path | What it is |
 | --- | --- |
-| `bootloader/` | Multiboot v1 entry: `boot.S`, `protmode.c`, `linker.ld`, `Makefile` |
+| `Makefile` | builds `build/boot.elf` and the optional ISO from `startup/`, `arch/`, `include/` |
+| `linker.ld` | load address, section order and entry point of the image |
+| `startup/` | `boot.S`, the Multiboot entry point |
+| `include/` | headers shared across directories |
 | `kernel/` | the microkernel, empty |
 | `servers/` | user-space servers, empty |
 | `tools/` | the toolchain: build scripts, fetched sources, and the `local/` install prefix |
@@ -41,19 +44,19 @@ rebuilds a subset.
 
 ## Use
 
-`run.sh` passes any make target through to `bootloader/Makefile`:
+`run.sh` passes any make target through to the top-level `Makefile`:
 
 ```bash
 ./run.sh            # build and boot in qemu, which exits by itself after the message
 ./run.sh all        # build only
-./run.sh clean      # clean the bootloader build
+./run.sh clean      # clean the image build
 ./run.sh iso        # bootable GRUB ISO, needs grub-mkrescue and xorriso
 ./run.sh run-iso    # boot that ISO from the emulated CD-ROM
 ./run.sh --64       # use the x86_64-elf toolchain, built on first use
 ```
 
 `source tools/env.sh` puts the cross tools on `PATH` in the current shell, after which
-`make -C bootloader` works on its own. Details of the layout, the dependency layers and the
+`make` at the top of the tree works on its own. Details of the layout, the dependency layers and the
 conventions live in [`AGENTS.md`](AGENTS.md).
 
 ## Notes

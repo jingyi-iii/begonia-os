@@ -10,19 +10,23 @@ LD      := $(TARGET)-ld
 QEMU          ?= qemu-system-i386
 GRUB_MKRESCUE ?= grub-mkrescue
 
-# boot.S is 32-bit assembly, protmode.c is freestanding 32-bit C: keep -m32
-# even when TARGET=x86_64-elf, because the image is still 32-bit here.
+# Paths are relative to the top of the tree.
+ARCH_DIR := arch
+INC_DIR  := include
+
+# boot.S is 32-bit assembly, the C files are freestanding and 32-bit too: keep
+# -m32 even when TARGET=x86_64-elf, because the image is still 32-bit here.
 # -fno-pic keeps addressing absolute, so `lgdt` and the far jump stay simple.
 ASFLAGS := --32
 CFLAGS  := -m32 -O2 -ffreestanding -fno-pic -fno-stack-protector -fno-builtin \
-           -fno-asynchronous-unwind-tables -Wall -Wextra
+           -I$(INC_DIR) -fno-asynchronous-unwind-tables -Wall -Wextra
 
-BUILD  := build
-OBJ    := $(BUILD)/boot.o $(BUILD)/protmode.o $(BUILD)/com.o $(BUILD)/pic.o \
-          $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o
-ELF    := $(BUILD)/boot.elf
-ISO    := $(BUILD)/boot.iso
-ISODIR := $(BUILD)/iso
+BUILD   := build
+OBJ     := $(BUILD)/boot.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)/pic.o \
+           $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o
+ELF     := $(BUILD)/boot.elf
+ISO     := $(BUILD)/boot.iso
+ISODIR  := $(BUILD)/iso
 
 .PHONY: all run iso run-iso clean
 
@@ -31,28 +35,30 @@ all: $(ELF)
 $(BUILD):
 	mkdir -p $(BUILD)
 
-$(BUILD)/boot.o: boot.S | $(BUILD)
+$(BUILD)/boot.o: startup/boot.S | $(BUILD)
 	$(AS) $(ASFLAGS) -o $@ $<
 
-# protmode.c: protected-mode entry (GDT + CR0.PE).  See the header comment.
-$(BUILD)/protmode.o: protmode.c | $(BUILD)
+# gdt.c: the flat GDT and the switch into protected mode.
+$(BUILD)/gdt.o: $(ARCH_DIR)/i686/gdt.c $(INC_DIR)/boot_common.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# com.c: the COM1 console, shared by boot.S and interrupt.c.
-$(BUILD)/com.o: com.c com.h boot_common.h | $(BUILD)
+# com.c: the COM1 console; the 16550 and port I/O are PC hardware.
+$(BUILD)/com.o: $(ARCH_DIR)/i686/com.c $(ARCH_DIR)/i686/com.h \
+                $(ARCH_DIR)/i686/io.h $(INC_DIR)/boot_common.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # pic.c: the 8259 pair and the PIT.
-$(BUILD)/pic.o: pic.c pic.h boot_common.h | $(BUILD)
+$(BUILD)/pic.o: $(ARCH_DIR)/i686/pic.c $(ARCH_DIR)/i686/pic.h \
+                $(ARCH_DIR)/i686/io.h $(INC_DIR)/boot_common.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# interrupt.c is the IDT, interrupt.S is the ISR entry points.
-# The assembly object cannot be interrupt.o: interrupt.c owns that
-# name, so it is built as interrupt_asm.o from the same basename.
-$(BUILD)/interrupt.o: interrupt.c | $(BUILD)
+# interrupt.c is the IDT, interrupt.S the ISR entry points.  The assembly
+# object cannot be interrupt.o: interrupt.c owns that name.
+$(BUILD)/interrupt.o: $(ARCH_DIR)/i686/interrupt.c $(ARCH_DIR)/i686/com.h \
+                      $(ARCH_DIR)/i686/pic.h $(INC_DIR)/boot_common.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(BUILD)/interrupt_asm.o: interrupt.S | $(BUILD)
+$(BUILD)/interrupt_asm.o: $(ARCH_DIR)/i686/interrupt.S | $(BUILD)
 	$(AS) $(ASFLAGS) -o $@ $<
 
 $(ELF): $(OBJ) linker.ld

@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS_DIR="$ROOT_DIR/tools"
 TOOLCHAIN_DIR="$TOOLS_DIR/local"
-BOOT_DIR="$ROOT_DIR/bootloader"
 
 force_tools=0
 skip_deps=0
@@ -16,8 +15,8 @@ usage() {
 Usage: $(basename -- "$0") [options] [make-target...]
 
 Ask which toolchain to use (32-bit by default), make sure it exists (building
-it on first use), then build and run the bootloader in bootloader via
-qemu. Any make targets are passed through to bootloader/Makefile
+it on first use), then build and run the image in startup via
+qemu.  Any make targets are passed through to the top-level Makefile
 (default: run).
 
 Options:
@@ -29,9 +28,9 @@ Options:
   -h, --help       Show this help
 
 Examples:
-  $(basename -- "$0")          # build the bootloader and launch qemu
+  $(basename -- "$0")          # build the image and launch qemu
   $(basename -- "$0") all      # build only
-  $(basename -- "$0") clean    # clean the bootloader build
+  $(basename -- "$0") clean    # clean the image build
   $(basename -- "$0") --64     # use the 64-bit (long mode) toolchain
 EOF
 }
@@ -140,12 +139,12 @@ main() {
     # shellcheck source=tools/env.sh
     source "$TOOLS_DIR/env.sh"
 
-    if [[ ! -f "$BOOT_DIR/Makefile" && ! -f "$BOOT_DIR/makefile" && ! -f "$BOOT_DIR/GNUmakefile" ]]; then
-        echo >&2 "ERROR: No Makefile found in $BOOT_DIR"
+    if [[ ! -f "$ROOT_DIR/Makefile" && ! -f "$ROOT_DIR/makefile" && ! -f "$ROOT_DIR/GNUmakefile" ]]; then
+        echo >&2 "ERROR: No Makefile found in $ROOT_DIR"
         exit 1
     fi
 
-    make -C "$BOOT_DIR" "${targets[@]}"
+    make -C "$ROOT_DIR" "${targets[@]}"
 }
 
 main "$@"

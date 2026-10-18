@@ -2,7 +2,7 @@
 # <type>(<scope>): <imperative summary, <= 50 chars, no trailing period>
 #
 # type:  feat | fix | build | docs | refactor | perf | test | chore | ci | style | revert
-# scope: bootloader | kernel | servers | tools | run | docs
+# scope: startup | kernel | servers | tools | run | agents | docs
 #
 # Body (optional, two to four lines is plenty): explain WHY, not what the diff
 # already shows.  Wrap at 72.

@@ -1,4 +1,5 @@
 #include "com.h"
+#include "io.h"
 
 /* COM1 at 0x3F8, the usual 16550 register block.  Only a few of them matter
  * here, and LSR is the one to poll before every byte: reading the data port
