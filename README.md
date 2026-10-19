@@ -58,13 +58,13 @@ rebuilds a subset.
 ```
 
 `source tools/env.sh` puts the cross tools on `PATH` in the current shell, after which
-`make` at the top of the tree works on its own. Details of the layout, the dependency layers and the
-conventions live in [`AGENTS.md`](AGENTS.md).
+`make` at the top of the tree works on its own.
 
 ## Notes
 
-`kernel/` and `servers/` are placeholders with a `.gitkeep` each, so a fresh clone has the
-directories the layout promises.
+`kernel/` holds the entry point. `servers/` is still empty, so it does not appear in a
+fresh clone at all: git stores no empty directories. Add a `.gitkeep` there (or the first
+server) when the directory should exist.
 
 The toolchain sources are not committed. `gcc-16.2.0.tar.xz` alone is 107 MB, over GitHub's
 100 MiB per-file limit, and the whole set would add 162 MB to every clone, so
