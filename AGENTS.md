@@ -13,10 +13,13 @@ built with the project's own cross toolchain and run under qemu.
 - `startup/` — where execution starts: `boot.S`, the Multiboot entry point
 - `build/` — output, never committed
 - `arch/` — CPU-specific code, one directory per target (`i686/` now, `x86_64/` planned):
-  `gdt.c`, `interrupt.c` + `interrupt.S`, `pic.c`, `com.c`, and the headers that go
-  with them
-- `include/` — headers shared by more than one directory (`boot_common.h`)
-- `kernel/` — the kernel (not implemented yet; it needs a `Makefile`)
+  `gdt.c`, `interrupt.c` + `interrupt.S`, `pic.c`, `com.c`, `task.c`, and the headers
+  that go with them
+- `include/` — headers shared by more than one directory (`boot_common.h`, `errno.h`,
+  `string.h`, `task.h`)
+- `kernel/` — the kernel; `kerner.c` holds `kmain()`, which brings up the TSS and
+  switches to a first task
+- `lib/` — freestanding helpers the image links against (`string.c`: memset, memcpy)
 - `servers/` — servers (not implemented yet)
 - `tools/` — cross toolchain sources and build scripts
   - `packages/` — toolchain source tarballs, fetched by `fetch-packages.sh`
@@ -80,6 +83,8 @@ built with the project's own cross toolchain and run under qemu.
   GitHub's 100 MiB per-file limit.
 - To change the `local/` prefix or the `packages/` path, edit `PREFIX` and each component's
   `fpath` at the top of `build-toolchain.sh`.
+- Functions return 0 on success and a negated code from `include/errno.h` on failure
+  (`return -EINVAL;`); there is no global `errno`.
 
 ## Startup
 
@@ -87,6 +92,8 @@ built with the project's own cross toolchain and run under qemu.
   the entry point of the OS image - the first half of the kernel, not a loader.  Its first
   two instructions save `%eax` (the magic) and `%ebx` (the multiboot info address) into
   `boot_magic` and `boot_mbi`, before the first C call can clobber them.
+- `_start` ends with `call kmain()` in `kernel/`; `exit_from_qemu` is exported (`.global`)
+  so the kernel can call back to end the run.
 - The top-level `Makefile` builds a 32-bit Multiboot v1 ELF (`build/boot.elf`) loaded at 1 MiB.
   `boot.S` is assembled with `$(TARGET)-as --32` and linked with `$(TARGET)-ld -m elf_i386`;
   there is no 512-byte boot sector and no `objcopy` step. Both toolchains can build it (the
@@ -144,6 +151,28 @@ built with the project's own cross toolchain and run under qemu.
   GDT. Add push/pop ds/es/fs/gs plus a reload of 0x10 before user mode arrives.
 - `boot.S` raises `int 1` and `int 0x3F` on every boot, so the slots, the frame and `iret` stay
   exercised. Both are traps and return.
+
+## Tasks
+
+- `gdt.h` fixes the slot numbers: 0 null, 1 flat code (`0x08`), 2 flat data (`0x10`), 3 TSS
+  (`0x18`), 4 LDT (`0x20`).  `gdt_set_entry()` takes an **index**, not a selector - passing
+  `SEL_TSS` would write slot 24 and leave `ltr` reading a null descriptor.
+- `tss_init()` fills `g_tss`, installs its descriptor in slot 3 and does `ltr`.  It has to run
+  before the first task: a same-ring `iret` never looks at the TSS, so a ring-0 task works
+  without it, but at CPL 3 the first `in`/`out` and the first interrupt read `ss0`/`esp0` and
+  the I/O bitmap out of it.
+- `task_init()` lays a `struct regs` at the top of the task stack: the segment registers, then
+  the order `popa` expects, then the `iret` frame (`eip`, `cs`, `eflags`, and `esp`/`ss` for
+  ring 3).  It zeroes the context first, so every register `popa` loads is defined.
+- `task_restore()` points the LDT descriptor in slot 4 at this task, sets `g_tss.esp0` for
+  ring 3, then `mov %esp` + `popl gs/fs/es/ds` + `popa` + `iret`.  It does not save the running
+  context: a one-way jump, not a scheduler yet.
+- `iobase = sizeof(tss)` puts the I/O map base at the TSS limit, which the SDM reads as "no I/O
+  bitmap": every `in`/`out` (and `cli`/`sti`/`hlt`) from ring 3 is `#GP(0)`.  The demo sets
+  `IOPL = 3` in the task eflags so it can use COM1; an I/O bitmap or a syscall gate is the real
+  fix.
+- `kmain` in `kernel/` creates this one task and jumps into it; the task prints and ends the
+  qemu run.
 
 ## grub / xorriso
 

@@ -1,19 +1,8 @@
-#include "boot_common.h"
+#include "gdt.h"
 
 /* CR0 control bits. */
 #define CR0_PE          (1u << 0)   /* bit  0: Protection Enable -> enter protected mode */
 #define CR0_PG          (1u << 31)  /* bit 31: Paging -> NOT here, see the note below   */
-
-#define GDT_DUMMY       (0)
-#define GDT_SYS_CODE    (1)
-#define GDT_SYS_DATA    (2)
-#define GDT_TSS         (3)
-#define GDT_LDT         (4)
-
-#define SEL_SYS_CODE    (GDT_SYS_CODE << 3)   /* 0x08 */
-#define SEL_SYS_DATA    (GDT_SYS_DATA << 3)   /* 0x10 */
-#define SEL_TSS         (GDT_TSS << 3)        /* 0x18 */
-#define SEL_LDT         (GDT_LDT << 3)        /* 0x20 */
 
 #define GDT_TYPE_CODE   (0xA)       /* code, readable -> access byte 0x9A */
 #define GDT_TYPE_DATA   (0x2)       /* data, writable -> access byte 0x92 */
@@ -22,25 +11,6 @@ typedef struct {
     u16 limit;
     u32 base;
 } __attribute__((packed)) gdt_meta;
-
-typedef union {
-    u64 raw;
-    struct {
-        u32 limit_low  : 16;
-        u32 base_low   : 16;
-        u32 base_mid   : 8;
-        u32 type       : 4;
-        u32 s          : 1;
-        u32 dpl        : 2;
-        u32 present    : 1;
-        u32 limit_high : 4;
-        u32 avl        : 1;
-        u32 l          : 1;
-        u32 db         : 1;
-        u32 gran       : 1;
-        u32 base_high  : 8;
-    } __attribute__((packed));
-} gdt_entry;
 
 static gdt_entry gdt[256] = {0};
 static gdt_meta gdtmeta = {
@@ -86,4 +56,21 @@ void switch_to_protect_mode(void)
         : "i"(CR0_PE)
         : "eax", "memory"
     );
+}
+
+gdt_entry* gdt_get_entry(u32 index)
+{
+    if (index >= sizeof(gdt) / sizeof(gdt[0]))
+        return 0;
+
+    return &gdt[index];
+}
+
+int gdt_set_entry(u32 index, gdt_entry entry)
+{
+    if (index >= sizeof(gdt) / sizeof(gdt[0]))
+        return -1;
+
+    gdt[index] = entry;
+    return 0;
 }

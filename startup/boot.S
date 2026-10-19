@@ -61,13 +61,17 @@ _start:
     call    com_print
     addl    $4,         %esp
 
-    jmp     exit_from_qemu
+    call    kmain
 
-/* On qemu: write to the isa-debug-exit port and it terminates itself. */
+/* On qemu: write to the isa-debug-exit port and it terminates itself.  C code
+ * (kmain) calls this to end the run. */
+.global exit_from_qemu
 exit_from_qemu:
     movw    $0x0501,    %dx
     movb    $0x10,      %al
     outb    %al,        %dx
+
+
 
 /* On real hardware that write is ignored, so just halt forever. */
 hang:
@@ -77,7 +81,7 @@ hang:
 
 .section .rodata
 welc_msg:
-    .asciz  "\r\nBegoniaOS bootloader running\r\n"
+    .asciz  "\r\nBegoniaOS startup running\r\n"
 code32_msg:
     .asciz  "Already in 32-bit protected mode\r\n"
 exit_msg:

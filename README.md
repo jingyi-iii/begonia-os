@@ -5,7 +5,8 @@ qemu.
 
 What exists today is one 32-bit Multiboot v1 image. GRUB or `qemu -kernel` hands control to it
 in protected mode, it installs its own flat GDT, sets `CR0.PE` and prints to COM1 before asking
-qemu to exit. The kernel and the servers are empty; this is a startup image and a toolchain so far.
+qemu to exit. The servers are empty; this is a startup image, a kernel entry point and a
+toolchain so far.
 
 Nothing is installed into the host to build it. `tools/build-toolchain.sh` compiles gcc 16.2.0,
 binutils 2.46.0 and gdb 17.2 from the tarballs in `tools/packages/` into `tools/local`, a
@@ -18,7 +19,8 @@ toolchain can share the same prefix.
 | `linker.ld` | load address, section order and entry point of the image |
 | `startup/` | `boot.S`, the Multiboot entry point |
 | `include/` | headers shared across directories |
-| `kernel/` | the microkernel, empty |
+| `kernel/` | the kernel: so far only the entry point |
+| `lib/` | freestanding helpers: `memset`, `memcpy` |
 | `servers/` | user-space servers, empty |
 | `tools/` | the toolchain: build scripts, fetched sources, and the `local/` install prefix |
 | `run.sh` | the entry point: picks a target, builds the toolchain if missing, boots in qemu |

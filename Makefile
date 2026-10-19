@@ -13,17 +13,22 @@ GRUB_MKRESCUE ?= grub-mkrescue
 # Paths are relative to the top of the tree.
 ARCH_DIR := arch
 INC_DIR  := include
+KERNEL_DIR := kernel
+LIB_DIR    := lib
 
 # boot.S is 32-bit assembly, the C files are freestanding and 32-bit too: keep
 # -m32 even when TARGET=x86_64-elf, because the image is still 32-bit here.
 # -fno-pic keeps addressing absolute, so `lgdt` and the far jump stay simple.
+# The kernel calls into the arch drivers (com_print and friends), so their
+# headers are on the path by bare name, next to the shared ones.
 ASFLAGS := --32
 CFLAGS  := -m32 -O2 -ffreestanding -fno-pic -fno-stack-protector -fno-builtin \
-           -I$(INC_DIR) -fno-asynchronous-unwind-tables -Wall -Wextra
-
+           -I$(INC_DIR) -I$(ARCH_DIR)/i686 -fno-asynchronous-unwind-tables \
+           -Wall -Wextra
 BUILD   := build
 OBJ     := $(BUILD)/boot.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)/pic.o \
-           $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o
+           $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o $(BUILD)/task.o \
+           $(BUILD)/string.o $(BUILD)/kerner.o
 ELF     := $(BUILD)/boot.elf
 ISO     := $(BUILD)/boot.iso
 ISODIR  := $(BUILD)/iso
@@ -60,6 +65,19 @@ $(BUILD)/interrupt.o: $(ARCH_DIR)/i686/interrupt.c $(ARCH_DIR)/i686/com.h \
 
 $(BUILD)/interrupt_asm.o: $(ARCH_DIR)/i686/interrupt.S | $(BUILD)
 	$(AS) $(ASFLAGS) -o $@ $<
+
+# task.c: TSS, LDT and the task context.
+$(BUILD)/task.o: $(ARCH_DIR)/i686/task.c $(ARCH_DIR)/i686/gdt.h \
+                  $(INC_DIR)/task.h $(INC_DIR)/boot_common.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# string.c: memset and memcpy; there is no libc.
+$(BUILD)/string.o: $(LIB_DIR)/string.c $(INC_DIR)/string.h $(INC_DIR)/boot_common.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# kerner.c: the kernel itself (kmain).
+$(BUILD)/kerner.o: $(KERNEL_DIR)/kerner.c | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(ELF): $(OBJ) linker.ld
 	$(LD) -m elf_i386 -T linker.ld -o $@ $(OBJ)
