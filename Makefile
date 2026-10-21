@@ -26,9 +26,9 @@ CFLAGS  := -m32 -O2 -ffreestanding -fno-pic -fno-stack-protector -fno-builtin \
            -I$(INC_DIR) -I$(ARCH_DIR)/i686 -fno-asynchronous-unwind-tables \
            -Wall -Wextra
 BUILD   := build
-OBJ     := $(BUILD)/boot.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)/pic.o \
+OBJ     := $(BUILD)/boot.o $(BUILD)/cpu.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)/pic.o \
            $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o $(BUILD)/task.o \
-           $(BUILD)/string.o $(BUILD)/kerner.o
+           $(BUILD)/string.o $(BUILD)/spinlock.o $(BUILD)/kerner.o
 ELF     := $(BUILD)/boot.elf
 ISO     := $(BUILD)/boot.iso
 ISODIR  := $(BUILD)/iso
@@ -66,6 +66,11 @@ $(BUILD)/interrupt.o: $(ARCH_DIR)/i686/interrupt.c $(ARCH_DIR)/i686/com.h \
 $(BUILD)/interrupt_asm.o: $(ARCH_DIR)/i686/interrupt.S | $(BUILD)
 	$(AS) $(ASFLAGS) -o $@ $<
 
+# cpu.c: the x86 instructions, so that lib/ stays portable C.
+$(BUILD)/cpu.o: $(ARCH_DIR)/i686/cpu.c $(ARCH_DIR)/i686/cpu.h \
+                 $(INC_DIR)/typedefs.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 # task.c: TSS, LDT and the task context.
 $(BUILD)/task.o: $(ARCH_DIR)/i686/task.c $(ARCH_DIR)/i686/gdt.h \
                   $(INC_DIR)/task.h $(INC_DIR)/typedefs.h \
@@ -74,6 +79,12 @@ $(BUILD)/task.o: $(ARCH_DIR)/i686/task.c $(ARCH_DIR)/i686/gdt.h \
 
 # string.c: memset and memcpy; there is no libc.
 $(BUILD)/string.o: $(LIB_DIR)/string.c $(INC_DIR)/string.h $(INC_DIR)/typedefs.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# spinlock.c: the locks behind include/spinlock.h; taking one disables interrupts.
+$(BUILD)/spinlock.o: $(LIB_DIR)/spinlock.c $(INC_DIR)/spinlock.h \
+                     $(INC_DIR)/typedefs.h $(ARCH_DIR)/i686/cpu.h \
+                     $(INC_DIR)/errno.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # kerner.c: the kernel itself (kmain).
