@@ -1,0 +1,70 @@
+#ifndef LIST_H
+#define LIST_H
+
+#include "typedefs.h"
+
+typedef struct list_node {
+    struct list_node* prev;
+    struct list_node* next;
+} list_node;
+
+#define LIST_HEAD_INIT(name) { &(name), &(name) }
+#define LIST_HEAD(name) \
+    list_node name = LIST_HEAD_INIT(name)
+
+static inline void list_init(list_node* node)
+{
+    node->prev = node;
+    node->next = node;
+}
+
+static inline void list_add(list_node* new_node, list_node* head)
+{
+    if (!new_node || !head)
+        return;
+
+    new_node->next = head->next;
+    new_node->prev = head;
+    head->next->prev = new_node;
+    head->next = new_node;
+}
+
+static inline void list_del(list_node* node)
+{
+    if (!node)
+        return;
+
+    node->prev->next = node->next;
+    node->next->prev = node->prev;
+    list_init(node);
+}
+
+static inline list_node* list_prev(list_node* node)
+{
+    return node ? node->prev : 0;
+}
+
+static inline list_node* list_next(list_node* node)
+{
+    return node ? node->next : 0;
+}
+
+static inline int list_empty(list_node* head)
+{
+    return head->next == head;
+}
+
+#define list_entry(ptr, type, member) \
+    ((type *)((char *)(ptr)-(uptr)(&((type *)0)->member)))
+
+#define list_for_each(pos, head) \
+    for (list_node* pos = (head)->next; pos != (head); pos = pos->next)
+
+#define list_for_each_safe(pos, n, head) \
+    for (list_node *pos = (head)->next, *n = pos->next; pos != (head); \
+         pos = n, n = pos->next)
+
+#define DECLARE_HEAD_NODE(name) \
+    list_node name = { .prev = &name, .next = &name }
+
+#endif

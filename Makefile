@@ -28,7 +28,8 @@ CFLAGS  := -m32 -O2 -ffreestanding -fno-pic -fno-stack-protector -fno-builtin \
 BUILD   := build
 OBJ     := $(BUILD)/boot.o $(BUILD)/cpu.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)/pic.o \
            $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o $(BUILD)/task.o \
-           $(BUILD)/string.o $(BUILD)/spinlock.o $(BUILD)/kerner.o
+           $(BUILD)/string.o $(BUILD)/spinlock.o $(BUILD)/heap.o \
+           $(BUILD)/kerner.o
 ELF     := $(BUILD)/boot.elf
 ISO     := $(BUILD)/boot.iso
 ISODIR  := $(BUILD)/iso
@@ -85,6 +86,12 @@ $(BUILD)/string.o: $(LIB_DIR)/string.c $(INC_DIR)/string.h $(INC_DIR)/typedefs.h
 $(BUILD)/spinlock.o: $(LIB_DIR)/spinlock.c $(INC_DIR)/spinlock.h \
                      $(INC_DIR)/typedefs.h $(ARCH_DIR)/i686/cpu.h \
                      $(INC_DIR)/errno.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# heap.c: the 16 MiB static pool behind malloc()/free().
+$(BUILD)/heap.o: $(LIB_DIR)/heap.c $(INC_DIR)/heap.h $(INC_DIR)/list.h \
+                 $(INC_DIR)/spinlock.h $(INC_DIR)/typedefs.h \
+                 $(INC_DIR)/string.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # kerner.c: the kernel itself (kmain).

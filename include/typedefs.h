@@ -6,4 +6,8 @@
 #define u32 unsigned int
 #define u64 unsigned long long
 
+/* Wide enough to hold a pointer.  32-bit now; a 64-bit target has to
+ * widen this to unsigned long. */
+#define uptr unsigned int
+
 #endif
