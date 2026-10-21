@@ -1,7 +1,7 @@
 #ifndef ARCH_TASK_H
 #define ARCH_TASK_H
 
-#include "boot_common.h"
+#include "typedefs.h"
 
 typedef struct regs {
     u32     gs;

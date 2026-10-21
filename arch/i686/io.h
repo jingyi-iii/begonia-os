@@ -2,7 +2,7 @@
 #ifndef IO_H
 #define IO_H
 
-#include "boot_common.h"
+#include "typedefs.h"
 
 static inline void outb(u16 port, u8 value)
 {

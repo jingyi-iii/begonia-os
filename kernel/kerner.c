@@ -1,3 +1,4 @@
+#include "boot.h"
 #include "com.h"
 #include "task.h"
 

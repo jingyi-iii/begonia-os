@@ -1,4 +1,4 @@
-#include "boot_common.h"
+#include "typedefs.h"
 #include "com.h"
 #include "pic.h"
 

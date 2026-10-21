@@ -44,23 +44,23 @@ $(BUILD)/boot.o: startup/boot.S | $(BUILD)
 	$(AS) $(ASFLAGS) -o $@ $<
 
 # gdt.c: the flat GDT and the switch into protected mode.
-$(BUILD)/gdt.o: $(ARCH_DIR)/i686/gdt.c $(INC_DIR)/boot_common.h | $(BUILD)
+$(BUILD)/gdt.o: $(ARCH_DIR)/i686/gdt.c $(INC_DIR)/typedefs.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # com.c: the COM1 console; the 16550 and port I/O are PC hardware.
 $(BUILD)/com.o: $(ARCH_DIR)/i686/com.c $(ARCH_DIR)/i686/com.h \
-                $(ARCH_DIR)/i686/io.h $(INC_DIR)/boot_common.h | $(BUILD)
+                $(ARCH_DIR)/i686/io.h $(INC_DIR)/typedefs.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # pic.c: the 8259 pair and the PIT.
 $(BUILD)/pic.o: $(ARCH_DIR)/i686/pic.c $(ARCH_DIR)/i686/pic.h \
-                $(ARCH_DIR)/i686/io.h $(INC_DIR)/boot_common.h | $(BUILD)
+                $(ARCH_DIR)/i686/io.h $(INC_DIR)/typedefs.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # interrupt.c is the IDT, interrupt.S the ISR entry points.  The assembly
 # object cannot be interrupt.o: interrupt.c owns that name.
 $(BUILD)/interrupt.o: $(ARCH_DIR)/i686/interrupt.c $(ARCH_DIR)/i686/com.h \
-                      $(ARCH_DIR)/i686/pic.h $(INC_DIR)/boot_common.h | $(BUILD)
+                      $(ARCH_DIR)/i686/pic.h $(INC_DIR)/typedefs.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(BUILD)/interrupt_asm.o: $(ARCH_DIR)/i686/interrupt.S | $(BUILD)
@@ -68,15 +68,17 @@ $(BUILD)/interrupt_asm.o: $(ARCH_DIR)/i686/interrupt.S | $(BUILD)
 
 # task.c: TSS, LDT and the task context.
 $(BUILD)/task.o: $(ARCH_DIR)/i686/task.c $(ARCH_DIR)/i686/gdt.h \
-                  $(INC_DIR)/task.h $(INC_DIR)/boot_common.h | $(BUILD)
+                  $(INC_DIR)/task.h $(INC_DIR)/typedefs.h \
+                  $(INC_DIR)/string.h $(INC_DIR)/errno.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # string.c: memset and memcpy; there is no libc.
-$(BUILD)/string.o: $(LIB_DIR)/string.c $(INC_DIR)/string.h $(INC_DIR)/boot_common.h | $(BUILD)
+$(BUILD)/string.o: $(LIB_DIR)/string.c $(INC_DIR)/string.h $(INC_DIR)/typedefs.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # kerner.c: the kernel itself (kmain).
-$(BUILD)/kerner.o: $(KERNEL_DIR)/kerner.c | $(BUILD)
+$(BUILD)/kerner.o: $(KERNEL_DIR)/kerner.c $(INC_DIR)/boot.h \
+                    $(ARCH_DIR)/i686/com.h $(INC_DIR)/task.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(ELF): $(OBJ) linker.ld

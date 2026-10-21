@@ -2,7 +2,7 @@
 #ifndef PIC_H
 #define PIC_H
 
-#include "boot_common.h"
+#include "typedefs.h"
 
 void pic_remap(void);           /* IRQ0..15 -> vectors 0x20..0x2F            */
 void pic_mask_all(void);        /* mask every line: nothing gets through     */

@@ -1,7 +1,7 @@
 #ifndef GDT_H
 #define GDT_H
 
-#include "boot_common.h"
+#include "typedefs.h"
 
 #define GDT_DUMMY       (0)
 #define GDT_SYS_CODE    (1)

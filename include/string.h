@@ -4,7 +4,7 @@
 #ifndef STRING_H
 #define STRING_H
 
-#include "boot_common.h"
+#include "typedefs.h"
 
 void* memset(void* dst, int value, u32 n);
 void* memcpy(void* dst, const void* src, u32 n);
