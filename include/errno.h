@@ -20,4 +20,21 @@
 #define ENOSYS           38     /* not implemented                    */
 #define ETIMEDOUT       110     /* timed out                          */
 
+#define E_PERM           -EPERM
+#define E_NOENT          -ENOENT
+#define E_IO             -EIO
+#define E_AGAIN          -EAGAIN
+#define E_NOMEM          -ENOMEM
+#define E_ACCES          -EACCES
+#define E_FAULT          -EFAULT
+#define E_BUSY           -EBUSY
+#define E_EXIST          -EEXIST
+#define E_NODEV          -ENODEV
+#define E_INVAL          -EINVAL
+#define E_NOSPC          -ENOSPC
+#define E_RANGE          -ERANGE
+#define E_NOTFOUND       -ENODEV
+#define E_NOTIMPL        -ENOSYS
+#define E_TIMEDOUT       -ETIMEDOUT
+
 #endif
