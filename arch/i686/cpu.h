@@ -16,4 +16,6 @@ void cpu_irq_restore(u32 flags);
  * from hoisting the load out of the loop. */
 void cpu_relax(void);
 
+void cpu_halt(void);
+
 #endif

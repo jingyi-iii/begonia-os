@@ -17,3 +17,9 @@ void cpu_relax(void)
 {
     __asm__ __volatile__("pause");
 }
+
+void cpu_halt(void)
+{
+    for (;;)
+        __asm__ __volatile__("hlt");
+}

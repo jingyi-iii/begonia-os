@@ -22,13 +22,18 @@ LIB_DIR    := lib
 # The kernel calls into the arch drivers (com_print and friends), so their
 # headers are on the path by bare name, next to the shared ones.
 ASFLAGS := --32
+# Declared-but-unused parameters are the norm while the process and thread
+# entry points are stubs; drop this once their bodies land.
 CFLAGS  := -m32 -O2 -ffreestanding -fno-pic -fno-stack-protector -fno-builtin \
            -I$(INC_DIR) -I$(ARCH_DIR)/i686 -fno-asynchronous-unwind-tables \
+           -Wno-unused-parameter \
            -Wall -Wextra
 BUILD   := build
 OBJ     := $(BUILD)/boot.o $(BUILD)/cpu.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)/pic.o \
-           $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o $(BUILD)/task.o \
+           $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o \
+           $(BUILD)/task.o $(BUILD)/task_asm.o \
            $(BUILD)/string.o $(BUILD)/spinlock.o $(BUILD)/heap.o \
+           $(BUILD)/process.o \
            $(BUILD)/kerner.o
 ELF     := $(BUILD)/boot.elf
 ISO     := $(BUILD)/boot.iso
@@ -92,6 +97,19 @@ $(BUILD)/spinlock.o: $(LIB_DIR)/spinlock.c $(INC_DIR)/spinlock.h \
 $(BUILD)/heap.o: $(LIB_DIR)/heap.c $(INC_DIR)/heap.h $(INC_DIR)/list.h \
                  $(INC_DIR)/spinlock.h $(INC_DIR)/typedefs.h \
                  $(INC_DIR)/string.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# arch/task.S: the register and stack switch itself; it cannot be inlined
+# because it changes ESP, which GCC assumes constant inside a function.
+$(BUILD)/task_asm.o: $(ARCH_DIR)/task.S | $(BUILD)
+	$(AS) $(ASFLAGS) -o $@ $<
+
+# process.c: threads and processes on top of task.c.
+$(BUILD)/process.o: $(KERNEL_DIR)/process.c $(INC_DIR)/process.h \
+                    $(INC_DIR)/heap.h $(INC_DIR)/list.h $(INC_DIR)/log.h \
+                    $(INC_DIR)/spinlock.h $(INC_DIR)/string.h \
+                    $(INC_DIR)/task.h $(INC_DIR)/typedefs.h \
+                    $(INC_DIR)/errno.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # kerner.c: the kernel itself (kmain).
