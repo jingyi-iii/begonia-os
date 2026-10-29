@@ -99,9 +99,9 @@ $(BUILD)/heap.o: $(LIB_DIR)/heap.c $(INC_DIR)/heap.h $(INC_DIR)/list.h \
                  $(INC_DIR)/string.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# arch/task.S: the register and stack switch itself; it cannot be inlined
+# arch/i686/task.S: the register and stack switch itself; it cannot be inlined
 # because it changes ESP, which GCC assumes constant inside a function.
-$(BUILD)/task_asm.o: $(ARCH_DIR)/task.S | $(BUILD)
+$(BUILD)/task_asm.o: $(ARCH_DIR)/i686/task.S | $(BUILD)
 	$(AS) $(ASFLAGS) -o $@ $<
 
 # process.c: threads and processes on top of task.c.
