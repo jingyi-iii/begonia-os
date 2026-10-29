@@ -86,6 +86,16 @@ void interrupt_init(void)
     idt_load();
 }
 
+void interrupt_unmask(u16 irq_nr)
+{
+    pic_unmask(irq_nr);
+}
+
+void interrupt_mask(u16 irq_nr)
+{
+    pic_mask(irq_nr);
+}
+
 /* Called from isr_common for every vector.  The vector number was pushed by
  * the slot itself, so this is the one place that knows what fired. */
 void isr_dispatch(isr_frame *f)

@@ -33,7 +33,7 @@ OBJ     := $(BUILD)/boot.o $(BUILD)/cpu.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)
            $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o \
            $(BUILD)/task.o $(BUILD)/task_asm.o \
            $(BUILD)/string.o $(BUILD)/spinlock.o $(BUILD)/heap.o \
-           $(BUILD)/process.o \
+           $(BUILD)/process.o $(BUILD)/irq.o \
            $(BUILD)/kerner.o
 ELF     := $(BUILD)/boot.elf
 ISO     := $(BUILD)/boot.iso
@@ -110,6 +110,13 @@ $(BUILD)/process.o: $(KERNEL_DIR)/process.c $(INC_DIR)/process.h \
                     $(INC_DIR)/spinlock.h $(INC_DIR)/string.h \
                     $(INC_DIR)/task.h $(INC_DIR)/typedefs.h \
                     $(INC_DIR)/errno.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# irq.c: the irqline/irq registry on top of interrupt_mask()/unmask().
+$(BUILD)/irq.o: $(KERNEL_DIR)/irq.c $(INC_DIR)/irq.h $(INC_DIR)/heap.h \
+                $(INC_DIR)/log.h $(INC_DIR)/spinlock.h $(INC_DIR)/list.h \
+                $(INC_DIR)/errno.h $(INC_DIR)/typedefs.h \
+                $(ARCH_DIR)/i686/interrupt.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # kerner.c: the kernel itself (kmain).
