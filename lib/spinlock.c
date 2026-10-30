@@ -38,5 +38,5 @@ int spinlock_trylock(spinlock* lock, u32* flags)
     }
 
     cpu_irq_restore(saved);
-    return -EBUSY;
+    return E_BUSY;
 }

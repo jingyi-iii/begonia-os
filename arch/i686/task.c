@@ -33,7 +33,7 @@ void ldt_load(task_ctx* context)
 int task_init(task_ctx* ctx, task_entry entry, task_priv priv)
 {
     if (!ctx || !entry)
-        return -EINVAL;
+        return E_INVAL;
 
     memset(ctx, 0, sizeof(*ctx));
 
@@ -68,7 +68,7 @@ int task_init(task_ctx* ctx, task_entry entry, task_priv priv)
 int task_release(task_ctx* ctx)
 {
     if (!ctx)
-        return -EINVAL;
+        return E_INVAL;
 
     memset(ctx, 0, sizeof(task_ctx));
     return 0;
