@@ -41,9 +41,13 @@
  * interrupted task's data segment. */
 isr_common:
     pusha
+
+    cli
     pushl   %esp                /* isr_frame * */
     call    isr_dispatch
     addl    $4, %esp
+    sti
+
     popa
     addl    $8, %esp            /* drop the vector and the error code */
     iret

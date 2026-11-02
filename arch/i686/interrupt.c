@@ -1,6 +1,7 @@
 #include "typedefs.h"
 #include "com.h"
 #include "pic.h"
+#include "interrupt.h"
 
 #define IDT_GATE_INT32   0xE    /* 32-bit interrupt gate: IF cleared on entry */
 #define IDT_GATE_TRAP32  0xF    /* 32-bit trap gate: IF left alone            */
@@ -23,16 +24,6 @@ typedef union {
         u32 isr_high  : 16;
     } __attribute__((packed));
 } idt_entry;
-
-/* What isr_common in interrupt.S leaves on the stack.  Keep in step
- * with the layout comment at the top of that file. */
-typedef struct {
-    u32 edi, esi, ebp, esp, ebx, edx, ecx, eax;   /* pusha                  */
-    u32 vector, err;                              /* slot, then CPU or 0    */
-    u32 eip, cs, eflags;                          /* pushed by the CPU      */
-} isr_frame;
-
-_Static_assert(sizeof(isr_frame) == 52, "isr_frame must match interrupt.S");
 
 static idt_entry idt[256] = {0};
 static idt_meta g_idtmeta = {
@@ -98,7 +89,7 @@ void interrupt_mask(u16 irq_nr)
 
 /* Called from isr_common for every vector.  The vector number was pushed by
  * the slot itself, so this is the one place that knows what fired. */
-void isr_dispatch(isr_frame *f)
+__attribute__((weak)) void isr_dispatch(isr_frame *f)
 {
     com_print("isr vector=0x");
     com_hex(f->vector);
