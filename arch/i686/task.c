@@ -55,10 +55,11 @@ int task_init(task_ctx* ctx, task_entry entry, task_priv priv)
 
     u32* sp = (u32*)ctx->kstack_top;
     *--sp = (u32)entry;
-    *--sp = 0;  // ebp
-    *--sp = 0;  // ebx
-    *--sp = 0;  // esi
-    *--sp = 0;  // edi
+    *--sp = 0;          // ebp
+    *--sp = 0;          // ebx
+    *--sp = 0;          // esi
+    *--sp = 0;          // edi
+    *--sp = 0x00003202; // eflags: IF=1, IOPL=3
 
     ctx->esp = (u32)sp;
 

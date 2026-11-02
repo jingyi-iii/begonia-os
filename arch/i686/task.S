@@ -9,6 +9,7 @@ task_switch_asm:
     pushl   %ebx
     pushl   %esi
     pushl   %edi
+    pushfl
 
     testl   %eax,           %eax
     jz      1f
@@ -16,6 +17,7 @@ task_switch_asm:
 
 1:
     movl    (%edx),         %esp
+    popfl
     popl    %edi
     popl    %esi
     popl    %ebx
