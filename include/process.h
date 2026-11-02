@@ -53,18 +53,19 @@ typedef struct {
     list_node       this_child;
 } tcb;
 
-i32     thread_create (task_priv priv, task_entry entry,
-                                     void* param, pcb* parent);
-void    thread_exit   (i32 tid);
-void    thread_yield  (void);
-void    thread_block  (i32 tid);
-void    thread_unblock(i32 tid);
+i32     thread_create       (task_priv priv, task_entry entry,
+                             void* param, pcb* parent);
+void    thread_exit         (i32 tid);
+void    thread_yield        (void);
+void    thread_block        (i32 tid);
+void    thread_unblock      (i32 tid);
 
-void    thread_start  (void);
+void    thread_start        (void);
 
-i32     proc_create   (proc_priv priv, task_entry entry, void* param);
-void    proc_exit     (i32 pid);
-void    proc_block    (i32 pid);
-void    proc_unblock  (i32 pid);
+i32     proc_create         (proc_priv priv, task_entry entry, void* param);
+void    proc_exit           (i32 pid);
+void    proc_block          (i32 pid);
+void    proc_unblock        (i32 pid);
 
+void    process_env_init    (void);
 #endif

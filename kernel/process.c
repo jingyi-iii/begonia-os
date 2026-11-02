@@ -3,11 +3,13 @@
 #include "log.h"
 #include "string.h"
 #include "cpu.h"
+#include "irq.h"
 
 static DECLARE_HEAD_NODE(threads);
 static DECLARE_HEAD_NODE(processes);
 static spinlock schedule_lock = SPINLOCK_INIT;
 static tcb* g_current_thread = 0;
+static irq* g_proc_timer_irq = 0;
 
 static inline tcb* thread_get_by_tid(i32 tid)
 {
@@ -388,4 +390,27 @@ void proc_unblock(i32 pid)
             thread->state = TS_READY;
     }
     spinlock_unlock(&schedule_lock, eflags);
+}
+
+void proc_timer_handler(void* context)
+{
+    (void)context;
+
+    static u32 timeslice = 0;
+    timeslice++;
+
+    if (timeslice < 10)
+        return;
+
+    timeslice = 0;
+    LOG("proc_timer_handler: timer interrupt, yield current thread\n");
+    thread_yield();
+}
+
+void process_env_init(void)
+{
+    tss_init();
+    irq_request(&g_proc_timer_irq, "proc_timer", 0, 0, proc_timer_handler, 0);
+    if (g_proc_timer_irq)
+        irq_unmask(g_proc_timer_irq);
 }
