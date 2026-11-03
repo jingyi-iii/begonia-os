@@ -4,6 +4,7 @@
 #include "log.h"
 #include "string.h"
 #include "pic.h"
+#include "cpu.h"
 
 #define MAX_IRQ_LINE    (16)
 static irqline* irqlines[MAX_IRQ_LINE] = {0};
@@ -120,6 +121,15 @@ static inline int irqline_get_available_minor_locked(struct irqline* line,
 
 void isr_dispatch(isr_frame *f)
 {
+    if (f->vector < 32) {
+        com_print("exception 0x"); com_hex(f->vector);
+        com_print(" err=0x");      com_hex(f->err);
+        com_print(" eip=0x");      com_hex(f->eip);
+        com_print(" cs=0x");       com_hex(f->cs);
+        com_print("\r\n");
+        cpu_halt();
+    }
+
     int major = f->vector - 32;
     if (major < 0 || major >= MAX_IRQ_LINE) {
         LOG("isr_dispatch: invalid major");
@@ -132,7 +142,7 @@ void isr_dispatch(isr_frame *f)
     if (!line)
         return;
 
-    list_for_each(each, &line->irqs) {
+    list_for_each_safe(each, n, &line->irqs) {
         irq* p = list_entry(each, irq, node_in_irqline);
         if (p->enabled && p->handler) {
             p->handler(p->context);

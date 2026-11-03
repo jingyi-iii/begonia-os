@@ -54,8 +54,6 @@ _start:
     /* From here on a fault reports through the IDT instead of resetting
      * the machine.  Interrupts stay off: nothing calls sti yet. */
     call    interrupt_init
-    int     $0x01       /* #DB: a trap, so returning really continues */
-    int     $0x3F       /* 63: no CPU meaning, exercises a plain slot */
 
     pushl   $exit_msg
     call    com_print

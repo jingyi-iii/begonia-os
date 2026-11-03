@@ -2,25 +2,22 @@
 #include "com.h"
 #include "task.h"
 #include "process.h"
+#include "pic.h"
 
 void first_task(void)
 {
-    static u32 count = 0;
     while (1) {
-        count++;
-        if (count % 1000)
-            com_print("first task running!\r\n");
+        com_print("first task running!\r\n");
     }
 }
 
 void second_task(void)
 {
     static u32 count = 0;
-
     while (1) {
+        com_print("second task running!\r\n");
+
         count++;
-        if (count % 1000)
-            com_print("second task running!\r\n");
         if (count > 10000)
             exit_from_qemu();
     }
@@ -29,6 +26,7 @@ void second_task(void)
 void kmain(void)
 {
     com_print("kernel main running!\r\n");
+    pit_init(100);
 
     process_env_init();
     thread_create(TASK_PRIV_KERNEL, second_task, 0, 0);

@@ -34,7 +34,7 @@ OBJ     := $(BUILD)/boot.o $(BUILD)/cpu.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)
            $(BUILD)/task.o $(BUILD)/task_asm.o \
            $(BUILD)/string.o $(BUILD)/spinlock.o $(BUILD)/heap.o \
            $(BUILD)/process.o $(BUILD)/irq.o \
-           $(BUILD)/kerner.o
+           $(BUILD)/kernel.o
 ELF     := $(BUILD)/boot.elf
 ISO     := $(BUILD)/boot.iso
 ISODIR  := $(BUILD)/iso
@@ -119,8 +119,8 @@ $(BUILD)/irq.o: $(KERNEL_DIR)/irq.c $(INC_DIR)/irq.h $(INC_DIR)/heap.h \
                 $(ARCH_DIR)/i686/interrupt.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# kerner.c: the kernel itself (kmain).
-$(BUILD)/kerner.o: $(KERNEL_DIR)/kerner.c $(INC_DIR)/boot.h \
+# kernel.c: the kernel itself (kmain).
+$(BUILD)/kernel.o: $(KERNEL_DIR)/kernel.c $(INC_DIR)/boot.h \
                     $(ARCH_DIR)/i686/com.h $(INC_DIR)/task.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
