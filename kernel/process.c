@@ -14,16 +14,16 @@ static irq* g_proc_timer_irq = 0;
 
 static inline tcb* thread_get_by_tid(i32 tid)
 {
-    u32 eflags = spinlock_lock(&schedule_lock);
+    u32 eflags = spinlock_lock_irqsave(&schedule_lock);
 
     list_for_each(node, &threads) {
         tcb* thread = list_entry(node, tcb, node);
         if (thread && thread->tid == tid) {
-            spinlock_unlock(&schedule_lock, eflags);
+            spinlock_unlock_irqrestore(&schedule_lock, eflags);
             return thread;
         }
     }
-    spinlock_unlock(&schedule_lock, eflags);
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
 
     return 0;
 }
@@ -41,37 +41,37 @@ static inline tcb* thread_get_current(void)
 
 static tcb* thread_get_next_runnable(tcb* current)
 {
-    u32 eflags = spinlock_lock(&schedule_lock);
+    u32 eflags = spinlock_lock_irqsave(&schedule_lock);
     list_for_each(node, &threads) {
         tcb* thread = list_entry(node, tcb, node);
         if (thread && thread->state == TS_READY && thread != current) {
-            spinlock_unlock(&schedule_lock, eflags);
+            spinlock_unlock_irqrestore(&schedule_lock, eflags);
             return thread;
         }
     }
-    spinlock_unlock(&schedule_lock, eflags);
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
     return 0;
 }
 
 static inline pcb* proc_get_by_pid(i32 pid)
 {
-    u32 eflags = spinlock_lock(&schedule_lock);
+    u32 eflags = spinlock_lock_irqsave(&schedule_lock);
 
     list_for_each(node, &processes) {
         pcb* proc = list_entry(node, pcb, node);
         if (proc && proc->pid == pid) {
-            spinlock_unlock(&schedule_lock, eflags);
+            spinlock_unlock_irqrestore(&schedule_lock, eflags);
             return proc;
         }
     }
-    spinlock_unlock(&schedule_lock, eflags);
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
 
     return 0;
 }
 
 static inline void thread_release_zombies(void)
 {
-    u32 eflags = spinlock_lock(&schedule_lock);
+    u32 eflags = spinlock_lock_irqsave(&schedule_lock);
 
     list_for_each_safe(node, next, &threads) {
         tcb* thread = list_entry(node, tcb, node);
@@ -83,12 +83,12 @@ static inline void thread_release_zombies(void)
         }
     }
 
-    spinlock_unlock(&schedule_lock, eflags);
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
 }
 
 static inline void proc_release_zombies(void)
 {
-    u32 eflags = spinlock_lock(&schedule_lock);
+    u32 eflags = spinlock_lock_irqsave(&schedule_lock);
 
     list_for_each_safe(node, next, &processes) {
         pcb* proc = list_entry(node, pcb, node);
@@ -101,15 +101,15 @@ static inline void proc_release_zombies(void)
         }
     }
 
-    spinlock_unlock(&schedule_lock, eflags); 
+    spinlock_unlock_irqrestore(&schedule_lock, eflags); 
 }
 
 static int thread_switch(thread_state from_state, tcb* to)
 {
-    u32 eflags = spinlock_lock(&schedule_lock);
+    u32 eflags = spinlock_lock_irqsave(&schedule_lock);
 
     if (!to || to->state != TS_READY) {
-        spinlock_unlock(&schedule_lock, eflags);
+        spinlock_unlock_irqrestore(&schedule_lock, eflags);
         return 0;
     }
 
@@ -119,7 +119,7 @@ static int thread_switch(thread_state from_state, tcb* to)
     to->state = TS_RUNNING;
     g_current_thread = to;
 
-    spinlock_unlock(&schedule_lock, eflags);
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
 
     task_switch(g_task_ctx, &to->ctx);
     thread_release_zombies();
@@ -177,11 +177,11 @@ i32 thread_create(task_priv priv, task_entry entry, void* param, pcb* parent)
     list_init(&thread->node);
     list_init(&thread->this_child);
 
-    eflags = spinlock_lock(&schedule_lock);
+    eflags = spinlock_lock_irqsave(&schedule_lock);
     if (parent)
         list_add(&thread->this_child, &parent->children);
     list_add(&thread->node, &threads);
-    spinlock_unlock(&schedule_lock, eflags);
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
     return thread->tid;
 }
 
@@ -192,10 +192,10 @@ void thread_exit(i32 tid)
         return;
 
     if (thread_get_current() != thread) {
-        u32 eflags = spinlock_lock(&schedule_lock);
+        u32 eflags = spinlock_lock_irqsave(&schedule_lock);
         list_del(&thread->node);
         list_del(&thread->this_child);
-        spinlock_unlock(&schedule_lock, eflags);
+        spinlock_unlock_irqrestore(&schedule_lock, eflags);
         memset(thread, 0, sizeof(tcb));
         free(thread);
         return;
@@ -232,9 +232,9 @@ void thread_block(i32 tid)
     }
 
     if (thread_get_current() != thread) {
-        eflags = spinlock_lock(&schedule_lock);
+        eflags = spinlock_lock_irqsave(&schedule_lock);
         thread->state = TS_PENDING;
-        spinlock_unlock(&schedule_lock, eflags);
+        spinlock_unlock_irqrestore(&schedule_lock, eflags);
         return;
     }
 
@@ -250,9 +250,9 @@ void thread_unblock(i32 tid)
     if (!thread || thread->state != TS_PENDING)
         return;
     
-    eflags = spinlock_lock(&schedule_lock);
+    eflags = spinlock_lock_irqsave(&schedule_lock);
     thread->state = TS_READY;
-    spinlock_unlock(&schedule_lock, eflags);
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
 }
 
 i32 proc_create(proc_priv priv, task_entry entry, void* param)
@@ -282,9 +282,9 @@ i32 proc_create(proc_priv priv, task_entry entry, void* param)
         return ret;
     }
 
-    eflags = spinlock_lock(&schedule_lock);
+    eflags = spinlock_lock_irqsave(&schedule_lock);
     list_add(&proc->node, &processes);
-    spinlock_unlock(&schedule_lock, eflags);
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
 
     return proc->pid;
 }
@@ -300,7 +300,7 @@ void proc_exit(i32 pid)
     if (!proc)
         return;
 
-    eflags = spinlock_lock(&schedule_lock);
+    eflags = spinlock_lock_irqsave(&schedule_lock);
     curr_thread = thread_get_current();
     list_for_each_safe(pos, n, &proc->children) {
         tcb* thread = list_entry(pos, tcb, this_child);
@@ -321,13 +321,13 @@ void proc_exit(i32 pid)
     if (list_empty(&proc->children)) {
         list_del(&proc->node);
         free(proc);
-        spinlock_unlock(&schedule_lock, eflags);
+        spinlock_unlock_irqrestore(&schedule_lock, eflags);
         return;
     }
 
     // child in running
     proc->state = PS_ZOMBIE;
-    spinlock_unlock(&schedule_lock, eflags);
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
     if (self_in_del_list)
         thread_exit(curr_thread->tid);
     cpu_halt();
@@ -345,10 +345,10 @@ void proc_block(i32 pid)
         return;
     }
 
-    eflags = spinlock_lock(&schedule_lock);
+    eflags = spinlock_lock_irqsave(&schedule_lock);
     if (proc->state != PS_READY) {
         LOG("proc_block: the process is already blocked\n");
-        spinlock_unlock(&schedule_lock, eflags);
+        spinlock_unlock_irqrestore(&schedule_lock, eflags);
         return;
     }
 
@@ -358,7 +358,7 @@ void proc_block(i32 pid)
         if (thread == thread_get_current())
             need_schedule = 1;
     }
-    spinlock_unlock(&schedule_lock, eflags);
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
 
     if (need_schedule) {
         tcb* thread = thread_get_current();
@@ -377,10 +377,10 @@ void proc_unblock(i32 pid)
         return;
     }
 
-    eflags = spinlock_lock(&schedule_lock);
+    eflags = spinlock_lock_irqsave(&schedule_lock);
     if (proc->state != PS_PENDING) {
         LOG("proc_unblock: the process is already unblocked\n");
-        spinlock_unlock(&schedule_lock, eflags);
+        spinlock_unlock_irqrestore(&schedule_lock, eflags);
         return;
     }
 
@@ -390,7 +390,7 @@ void proc_unblock(i32 pid)
         if (thread->state == TS_PENDING)
             thread->state = TS_READY;
     }
-    spinlock_unlock(&schedule_lock, eflags);
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
 }
 
 void proc_timer_handler(void* context)

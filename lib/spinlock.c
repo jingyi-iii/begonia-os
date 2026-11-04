@@ -2,7 +2,7 @@
 #include "cpu.h"
 #include "errno.h"
 
-u32 spinlock_lock(spinlock* lock)
+u32 spinlock_lock_irqsave(spinlock* lock)
 {
     u32 flags = cpu_irq_save();
 
@@ -20,13 +20,13 @@ u32 spinlock_lock(spinlock* lock)
 
 /* Release before restoring the flags: re-enabling interrupts first would let
  * a handler run while the lock is still held, and it would spin forever. */
-void spinlock_unlock(spinlock* lock, u32 flags)
+void spinlock_unlock_irqrestore(spinlock* lock, u32 flags)
 {
     __atomic_store_n(&lock->locked, 0, __ATOMIC_RELEASE);
     cpu_irq_restore(flags);
 }
 
-int spinlock_trylock(spinlock* lock, u32* flags)
+int spinlock_trylock_irqsave(spinlock* lock, u32* flags)
 {
     u32 expected = 0;
     u32 saved = cpu_irq_save();

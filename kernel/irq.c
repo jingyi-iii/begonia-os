@@ -190,10 +190,10 @@ int irq_request(irq **out, const char* name, u32 major,
     u32 eflags = 0;
     irqline* line = 0;
 
-    eflags = spinlock_lock(&create_lock);
+    eflags = spinlock_lock_irqsave(&create_lock);
     if (!irqlines[major])
         ret = irqline_init(&irqlines[major], major);
-    spinlock_unlock(&create_lock, eflags);
+    spinlock_unlock_irqrestore(&create_lock, eflags);
 
     if (ret) {
         LOG("irq_request: failed to init the irqline with major");
@@ -207,7 +207,7 @@ int irq_request(irq **out, const char* name, u32 major,
     }
 
     line = irqlines[major];
-    eflags = spinlock_lock(&line->splock);
+    eflags = spinlock_lock_irqsave(&line->splock);
 
     if (minor == IRQ_ANY_MINOR) {
         ret = irqline_get_available_minor_locked(line, &minor);
@@ -236,7 +236,7 @@ failed:
     irq_free(*out);
     *out = 0;
 exit:
-    spinlock_unlock(&line->splock, eflags);
+    spinlock_unlock_irqrestore(&line->splock, eflags);
     return ret;
 }
 
@@ -252,17 +252,17 @@ void irq_release(irq *p)
         return;
     }
 
-    u32 eflags = spinlock_lock(&line->splock);
+    u32 eflags = spinlock_lock_irqsave(&line->splock);
     irqline_remove_irq_locked(line, p);
     irqline_refresh_locked(line);
 
     empty = list_empty(&line->irqs);
-    spinlock_unlock(&line->splock, eflags);
+    spinlock_unlock_irqrestore(&line->splock, eflags);
 
     if (empty) {
-        u32 flags = spinlock_lock(&create_lock);
+        u32 flags = spinlock_lock_irqsave(&create_lock);
         irqlines[p->major] = 0;
-        spinlock_unlock(&create_lock, flags);
+        spinlock_unlock_irqrestore(&create_lock, flags);
         irqline_free(line);
     }
 
@@ -278,10 +278,10 @@ int irq_mask(struct irq* p)
     if (!line)
         return E_INVAL;
 
-    u32 eflags = spinlock_lock(&line->splock);
+    u32 eflags = spinlock_lock_irqsave(&line->splock);
     p->enabled = 0;
     irqline_refresh_locked(line);
-    spinlock_unlock(&line->splock, eflags);
+    spinlock_unlock_irqrestore(&line->splock, eflags);
 
     return 0;
 }
@@ -295,10 +295,10 @@ int irq_unmask(struct irq* p)
     if (!line)
         return E_INVAL;
 
-    u32 eflags = spinlock_lock(&line->splock);
+    u32 eflags = spinlock_lock_irqsave(&line->splock);
     p->enabled = 1;
     irqline_refresh_locked(line);
-    spinlock_unlock(&line->splock, eflags);
+    spinlock_unlock_irqrestore(&line->splock, eflags);
 
     return 0;
 }

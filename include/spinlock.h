@@ -10,9 +10,9 @@
  * can only ever block on an interrupt handler that wants the same lock, so a
  * variant that leaves IF alone would turn that handler into a deadlock.
  *
- * spinlock_lock() returns the caller's EFLAGS and spinlock_unlock() takes it
- * back, so nested sections restore the state each one found, and a forgotten
- * restore does not compile. */
+ * spinlock_lock_irqsave() returns the caller's EFLAGS and
+ * spinlock_unlock_irqrestore() takes it back, so nested sections restore
+ * the state each one found, and a forgotten restore does not compile. */
 typedef struct {
     volatile u32 locked;        /* 0 free, 1 held */
 } spinlock;
@@ -24,11 +24,11 @@ static inline void spinlock_init(spinlock* lock)
     lock->locked = 0;
 }
 
-u32  spinlock_lock(spinlock* lock);
-void spinlock_unlock(spinlock* lock, u32 flags);
+u32  spinlock_lock_irqsave(spinlock* lock);
+void spinlock_unlock_irqrestore(spinlock* lock, u32 flags);
 
 /* 0 when the lock was taken, -EBUSY when someone else holds it.  On success
- * *flags receives what spinlock_unlock() must be given. */
-int  spinlock_trylock(spinlock* lock, u32* flags);
+ * *flags receives what spinlock_unlock_irqrestore() must be given. */
+int  spinlock_trylock_irqsave(spinlock* lock, u32* flags);
 
 #endif

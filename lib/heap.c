@@ -33,7 +33,7 @@ static heappool krn_pool __attribute__((aligned(HEAP_ALIGN))) = {
 static void heap_init(heappool* pool)
 {
     heapchunk* chunk = (heapchunk*)pool->pool;
-    u32 eflags = spinlock_lock(&pool->splock);
+    u32 eflags = spinlock_lock_irqsave(&pool->splock);
     /*
      * avail_size tracks the total free bytes (header + payload of every
      * free chunk), so it starts at the whole pool size.  kmalloc() then
@@ -48,7 +48,7 @@ static void heap_init(heappool* pool)
     chunk->size = HEAP_TOTAL_SIZE - HEAP_HDR_SIZE;
     chunk->used = 0;
     list_add(&chunk->this_node, &pool->head_node);
-    spinlock_unlock(&pool->splock, eflags);
+    spinlock_unlock_irqrestore(&pool->splock, eflags);
 }
 
 static void* heap_malloc(heappool* pool, unsigned int alloc_size)
@@ -74,7 +74,7 @@ static void* heap_malloc(heappool* pool, unsigned int alloc_size)
     aligned_size = (alloc_size + HEAP_ALIGN - 1) & ~(HEAP_ALIGN - 1);
     req_size = HEAP_HDR_SIZE + aligned_size;
 
-    u32 eflags = spinlock_lock(&pool->splock);
+    u32 eflags = spinlock_lock_irqsave(&pool->splock);
     if (req_size > pool->avail_size)
         goto ALLOC_FAIL;
 
@@ -102,12 +102,12 @@ static void* heap_malloc(heappool* pool, unsigned int alloc_size)
     chunk->size = aligned_size;
 
     pool->avail_size -= req_size;
-    spinlock_unlock(&pool->splock, eflags);
+    spinlock_unlock_irqrestore(&pool->splock, eflags);
 
     return (void*)ret_addr;
 
 ALLOC_FAIL:
-    spinlock_unlock(&pool->splock, eflags);
+    spinlock_unlock_irqrestore(&pool->splock, eflags);
     return 0;
 }
 
@@ -119,11 +119,11 @@ static void heap_free(heappool* pool, void* pointer)
     if (!pointer)
         return;
 
-    u32 eflags = spinlock_lock(&pool->splock);
+    u32 eflags = spinlock_lock_irqsave(&pool->splock);
     free_chunk = (heapchunk *)((u8*)pointer - HEAP_HDR_SIZE);
 
     if (!free_chunk->used) {
-        spinlock_unlock(&pool->splock, eflags);
+        spinlock_unlock_irqrestore(&pool->splock, eflags);
         return;
     }
 
@@ -157,7 +157,7 @@ static void heap_free(heappool* pool, void* pointer)
     }
 
     free_chunk->used = 0;
-    spinlock_unlock(&pool->splock, eflags);
+    spinlock_unlock_irqrestore(&pool->splock, eflags);
 }
 
 void* malloc(unsigned int alloc_size)

@@ -21,17 +21,17 @@ int syscall_register(int id, sc_handler_fn handler, u32 param_max_size)
     sc->param_max_size = param_max_size;
     list_init(&sc->this_node);
 
-    u32 eflags = spinlock_lock(&splock);
+    u32 eflags = spinlock_lock_irqsave(&splock);
     list_for_each(node, &syscalls) {
         struct syscall* ex = list_entry(node, struct syscall, this_node);
         if (ex->id == id) {
-            spinlock_unlock(&splock, eflags);
+            spinlock_unlock_irqrestore(&splock, eflags);
             free(sc);
             return E_EXISTS;
         }
     }
     list_add(&sc->this_node, &syscalls);
-    spinlock_unlock(&splock, eflags);
+    spinlock_unlock_irqrestore(&splock, eflags);
 
     return 0;
 }
@@ -41,18 +41,18 @@ int syscall_unregister(int id)
     if (id < 0)
         return E_INVAL;
 
-    u32 eflags = spinlock_lock(&splock);
+    u32 eflags = spinlock_lock_irqsave(&splock);
     list_for_each_safe(node, next, &syscalls) {
         struct syscall* sc = list_entry(node, struct syscall, this_node);
         if (sc->id != id)
             continue;
         
         list_del(&sc->this_node);
-        spinlock_unlock(&splock, eflags);
+        spinlock_unlock_irqrestore(&splock, eflags);
         free(sc);
         return 0;
     }
-    spinlock_unlock(&splock, eflags);
+    spinlock_unlock_irqrestore(&splock, eflags);
 
     return E_NOTFOUND;
 }
@@ -63,7 +63,7 @@ int syscall_dispatch(u32 id, void* arg, u32 size)
     sc_handler_fn fn = 0;
     u32 param_max_size = 0;
 
-    u32 eflags = spinlock_lock(&splock);
+    u32 eflags = spinlock_lock_irqsave(&splock);
     list_for_each(node, &syscalls) {
         struct syscall* sc = list_entry(node, struct syscall, this_node);
         if ((u32)sc->id != id)
@@ -74,7 +74,7 @@ int syscall_dispatch(u32 id, void* arg, u32 size)
         param_max_size = sc->param_max_size;
         break;
     }
-    spinlock_unlock(&splock, eflags);
+    spinlock_unlock_irqrestore(&splock, eflags);
 
     if (ret)
         return ret;
