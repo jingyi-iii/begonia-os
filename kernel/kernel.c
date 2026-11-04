@@ -3,11 +3,13 @@
 #include "task.h"
 #include "process.h"
 #include "pic.h"
+#include "syscall.h"
 
 void first_task(void)
 {
+    syscall(0, 0, 0);
     while (1) {
-        com_print("first task running!\r\n");
+        // com_print("first task running!\r\n");
     }
 }
 
@@ -15,7 +17,7 @@ void second_task(void)
 {
     static u32 count = 0;
     while (1) {
-        com_print("second task running!\r\n");
+        // com_print("second task running!\r\n");
 
         count++;
         if (count > 10000)

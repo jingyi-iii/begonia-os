@@ -4,6 +4,7 @@
 #include "string.h"
 #include "cpu.h"
 #include "irq.h"
+#include "syscall.h"
 
 static DECLARE_HEAD_NODE(threads);
 static DECLARE_HEAD_NODE(processes);

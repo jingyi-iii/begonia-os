@@ -15,10 +15,12 @@
  * code by itself for a few exceptions only, so for every other vector the slot
  * pushes a dummy 0 first and the frame keeps one shape:
  *
- *      edi esi ebp esp ebx edx ecx eax     pusha, in reverse
+ *      edi esi ebp esp ebx edx ecx eax      pusha, in reverse
+ *      gs fs es ds                          saved by isr_common
  *      vector                               pushed by the slot
  *      error                                pushed by the CPU, or the dummy 0
  *      eip cs eflags                        pushed by the CPU
+ *      esp ss                               pushed by the CPU on a ring change
  *
  * The rest of the 0x90 bytes is NOP padding: room to grow the stub, or to
  * patch it at run time.
@@ -31,23 +33,29 @@
 .section .text
 .align 16
 
-/* The shared tail every slot jumps to.  It comes first on purpose: a forward
- * jump would make the assembler run a relaxation pass first.
- *
- * pusha/popa keep the interrupted code whole, so a vector that is not a real
- * fault can simply be returned from.  No segment registers are saved: all of
- * this still runs in ring 0 on the flat GDT.  Add push/pop ds/es/fs/gs plus a
- * reload of 0x10 when user mode arrives, or the handler runs on the
- * interrupted task's data segment. */
 isr_common:
+    pushl   %ds
+    pushl   %es
+    pushl   %fs
+    pushl   %gs
     pusha
+
+    movw    $0x10,      %ax
+    movw    %ax,        %ds
+    movw    %ax,        %es
+    movw    %ax,        %fs
+    movw    %ax,        %gs
 
     pushl   %esp                /* isr_frame * */
     call    isr_dispatch
-    addl    $4, %esp
+    addl    $4,         %esp
 
     popa
-    addl    $8, %esp            /* drop the vector and the error code */
+    popl    %gs
+    popl    %fs
+    popl    %es
+    popl    %ds
+    addl    $8,         %esp    /* drop the vector and the error code */
     iret
 
 .align 16
@@ -72,3 +80,33 @@ isr_begin:
     .org    isr_begin + ISR_INDEX * ISR_SLOT, 0x90
     .endr
 isr_end:
+
+.global syscall_tbl
+syscall_tbl:
+    pushl   %ds
+    pushl   %es
+    pushl   %fs
+    pushl   %gs
+    pusha
+
+    movw    $0x10,      %ax
+    movw    %ax,        %ds
+    movw    %ax,        %es
+    movw    %ax,        %fs
+    movw    %ax,        %gs
+
+    /* ebx = id, ecx = data, edx = data_size */
+    pushl   %edx
+    pushl   %ecx
+    pushl   %ebx
+    call    syscall_dispatch
+    addl    $12, %esp
+
+    movl    %eax,       28(%esp)    /* return value survives popa */
+
+    popa
+    popl    %gs
+    popl    %fs
+    popl    %es
+    popl    %ds
+    iret                            /* no vector/error to drop: int pushes 3 words */

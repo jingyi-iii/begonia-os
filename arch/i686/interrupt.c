@@ -2,6 +2,7 @@
 #include "com.h"
 #include "pic.h"
 #include "interrupt.h"
+#include "errno.h"
 
 #define IDT_GATE_INT32   0xE    /* 32-bit interrupt gate: IF cleared on entry */
 #define IDT_GATE_TRAP32  0xF    /* 32-bit trap gate: IF left alone            */
@@ -52,6 +53,7 @@ void idt_load(void)
  * so vector N is entered at isr_tbl + N * ISR_SLOT.  Keep both numbers in
  * step with that file. */
 extern u8 isr_tbl[];
+extern u8 syscall_tbl[];
 #define ISR_SLOT        0x90    /* must match .set ISR_SLOT in interrupt.S */
 #define ISR_VECTORS     256     /* one gate per IDT entry                  */
 #define SEL_KERNEL_CODE 0x08    /* GDT[1], the flat kernel code segment    */
@@ -67,6 +69,10 @@ void interrupt_init(void)
     for (vector = 0; vector < ISR_VECTORS; vector++)
         idt_set_gate(vector, (u32)isr_tbl + vector * ISR_SLOT,
                      SEL_KERNEL_CODE, 0);
+
+    /* syscall: 100 */
+    idt_set_gate(100, (u32)syscall_tbl,
+                 SEL_KERNEL_CODE, 3);
 
     /* The 8259s come out of the firmware at the BIOS default vectors
      * (0x08..) with some lines open, so remap and mask them before
@@ -87,6 +93,21 @@ void interrupt_mask(u16 irq_nr)
     pic_mask(irq_nr);
 }
 
+int syscall(u32 id, void* data, u32 data_size)
+{
+    int ret = 0;
+
+    __asm__ __volatile__(
+            "int  $100\n\t"
+            : "=a"(ret)
+            : "b"(id), "c"(data), "d"(data_size)
+            : "memory"
+    );
+
+    return ret;
+}
+
+
 /* Called from isr_common for every vector.  The vector number was pushed by
  * the slot itself, so this is the one place that knows what fired. */
 __attribute__((weak)) void isr_dispatch(isr_frame *f)
@@ -100,4 +121,15 @@ __attribute__((weak)) void isr_dispatch(isr_frame *f)
     com_print(" cs=0x");
     com_hex(f->cs);
     com_print("\r\n");
+}
+
+__attribute__((weak)) int syscall_dispatch(u32 id,
+                                           void* data, u32 data_size)
+{
+    (void)id;
+    (void)data;
+    (void)data_size;
+    com_print("syscall happened");
+
+    return E_NOSYS;
 }
