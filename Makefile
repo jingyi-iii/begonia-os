@@ -33,7 +33,7 @@ OBJ     := $(BUILD)/boot.o $(BUILD)/cpu.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)
            $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o \
            $(BUILD)/task.o $(BUILD)/task_asm.o \
            $(BUILD)/string.o $(BUILD)/spinlock.o $(BUILD)/heap.o \
-           $(BUILD)/process.o $(BUILD)/irq.o $(BUILD)/syscall.o \
+           $(BUILD)/process.o $(BUILD)/irq.o $(BUILD)/syscall.o $(BUILD)/log.o \
            $(BUILD)/kernel.o
 ELF     := $(BUILD)/boot.elf
 ISO     := $(BUILD)/boot.iso
@@ -117,6 +117,11 @@ $(BUILD)/irq.o: $(KERNEL_DIR)/irq.c $(INC_DIR)/irq.h $(INC_DIR)/heap.h \
                 $(INC_DIR)/log.h $(INC_DIR)/spinlock.h $(INC_DIR)/list.h \
                 $(INC_DIR)/errno.h $(INC_DIR)/typedefs.h \
                 $(ARCH_DIR)/i686/interrupt.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# log.c: printf-lite for LOG().
+$(BUILD)/log.o: $(LIB_DIR)/log.c $(INC_DIR)/log.h $(INC_DIR)/typedefs.h \
+                $(ARCH_DIR)/i686/com.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # syscall.c: the syscall table.

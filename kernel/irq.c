@@ -1,3 +1,4 @@
+#include "com.h"
 #include "heap.h"
 #include "interrupt.h"
 #include "irq.h"
