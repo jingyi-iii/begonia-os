@@ -9,7 +9,8 @@ void first_task(void)
 {
     syscall(0, 0, 0);
     while (1) {
-        // com_print("first task running!\r\n");
+        com_print("first task running!\r\n");
+        thread_yield();
     }
 }
 
@@ -17,10 +18,10 @@ void second_task(void)
 {
     static u32 count = 0;
     while (1) {
-        // com_print("second task running!\r\n");
+        com_print("second task running!\r\n");
 
         count++;
-        if (count > 10000)
+        if (count > 1000)
             exit_from_qemu();
     }
 }
@@ -31,9 +32,8 @@ void kmain(void)
     pit_init(100);
 
     process_env_init();
-    thread_create(TASK_PRIV_KERNEL, second_task, 0, 0);
+    thread_create(TASK_PRIV_USER, second_task, 0, 0);
     thread_create(TASK_PRIV_KERNEL, first_task, 0, 0);
-    __asm__ __volatile__("sti");
     thread_start();
 
     // current flow:

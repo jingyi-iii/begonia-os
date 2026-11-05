@@ -7,6 +7,8 @@
 #include "task.h"
 #include "typedefs.h"
 
+#define SYSCALL_CTRL_ID_PROC    (0)
+
 typedef enum {
     THREAD_PRIV_KERNEL = 0,
     THREAD_PRIV_USER   = 1,
