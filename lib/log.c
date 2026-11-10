@@ -210,11 +210,50 @@ static void log_vformat(char* buf, u32 cap, const char* fmt, va_list ap)
         buf[o.len < cap ? o.len : cap - 1] = '\0';
 }
 
-void log_write(const char* fmt, ...)
+static int log_color_on = 1;
+
+void log_set_color(int on)
+{
+    log_color_on = on;
+}
+
+int log_color_enabled(void)
+{
+    return log_color_on;
+}
+
+static const char* level_attr(log_level level)
+{
+    if (!log_color_on)
+        return "";
+
+    switch (level) {
+    case LOG_OK:    return "\x1b[32m";
+    case LOG_WARN:  return "\x1b[33m";
+    case LOG_ERR:   return "\x1b[31m";
+    case LOG_DEBUG: return "\x1b[36m";
+    default:        return "";
+    }
+}
+
+static const char* level_tag(log_level level)
+{
+    switch (level) {
+    case LOG_OK:    return "[ok] ";
+    case LOG_WARN:  return "[warn] ";
+    case LOG_ERR:   return "[err] ";
+    case LOG_DEBUG: return "[dbg] ";
+    default:        return "";
+    }
+}
+
+void log_print(log_level level, const char* fmt, ...)
 {
     char line[LOG_LINE_MAX];
     va_list ap;
     u32 len = 0;
+    const char* attr = level_attr(level);
+    const char* tag = level_tag(level);
 
     va_start(ap, fmt);
     log_vformat(line, sizeof line, fmt, ap);
@@ -225,7 +264,11 @@ void log_write(const char* fmt, ...)
     if (len && line[len - 1] == '\n')
         line[len - 1] = '\0';               /* the CRLF below stands in for it */
 
+    com_print(attr);
+    com_print(tag);
     com_print(line);
+    if (attr[0])
+        com_print("\x1b[0m");               /* never let the colour leak */
     com_putc('\r');
     com_putc('\n');
 }

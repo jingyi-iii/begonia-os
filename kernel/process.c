@@ -223,14 +223,14 @@ i32 thread_create(task_priv priv, task_entry entry, void* param, pcb* parent)
 
     thread = (tcb*)malloc(sizeof(tcb));
     if (!thread) {
-        LOG("thread_create: failed to alloc memory for tcb\n");
+        log_err("thread_create: failed to alloc memory for tcb\n");
         return E_NOMEM;
     }
 
     memset(thread, 0, sizeof(tcb));
     ret = task_init(&thread->ctx, thread_entry, priv);
     if (ret) {
-        LOG("thread_create: failed to init thread context\n");
+        log_err("thread_create: failed to init thread context\n");
         free(thread);
         return ret;
     }
@@ -278,7 +278,7 @@ void thread_exit(i32 tid)
 
     tcb* next = thread_get_next_runnable(thread);
     if (!next) {
-        LOG("thread_exit: last runnable thread, halting\n");
+        log_warn("thread_exit: last runnable thread, halting\n");
         cpu_halt();
     }
 
@@ -319,7 +319,7 @@ void thread_block(i32 tid)
     
     thread = thread_get_by_tid(tid);
     if (!thread || (thread->state == TS_PENDING || thread->state == TS_NULL)) {
-        LOG("thread_block: no such thread or the thread is already blocked\n");
+        log_warn("thread_block: no such thread or the thread is already blocked\n");
         return;
     }
 
@@ -375,7 +375,7 @@ i32 proc_create(proc_priv priv, task_entry entry, void* param)
 
     proc = (pcb*)malloc(sizeof(pcb));
     if (!proc) {
-        LOG("proc_create: failed to alloc memory for pcb\n");
+        log_err("proc_create: failed to alloc memory for pcb\n");
         return E_NOMEM;
     }
 
@@ -388,7 +388,7 @@ i32 proc_create(proc_priv priv, task_entry entry, void* param)
 
     ret = thread_create((task_priv)priv, entry, param, proc);
     if (ret < 0) {
-        LOG("proc_create: failed to create main thread for process\n");
+        log_err("proc_create: failed to create main thread for process\n");
         free(proc);
         return ret;
     }
@@ -470,13 +470,13 @@ void proc_block(i32 pid)
 
     proc = proc_get_by_pid(pid);
     if (!proc) {
-        LOG("proc_block: no such process\n");
+        log_warn("proc_block: no such process\n");
         return;
     }
 
     eflags = spinlock_lock_irqsave(&schedule_lock);
     if (proc->state != PS_READY) {
-        LOG("proc_block: the process is already blocked\n");
+        log_warn("proc_block: the process is already blocked\n");
         spinlock_unlock_irqrestore(&schedule_lock, eflags);
         return;
     }
@@ -511,13 +511,13 @@ void proc_unblock(i32 pid)
 
     proc = proc_get_by_pid(pid);
     if (!proc) {
-        LOG("proc_unblock: no such process\n");
+        log_warn("proc_unblock: no such process\n");
         return;
     }
 
     eflags = spinlock_lock_irqsave(&schedule_lock);
     if (proc->state != PS_PENDING) {
-        LOG("proc_unblock: the process is already unblocked\n");
+        log_warn("proc_unblock: the process is already unblocked\n");
         spinlock_unlock_irqrestore(&schedule_lock, eflags);
         return;
     }
@@ -585,7 +585,7 @@ static int proc_syscall_exec(void* data)
             proc_unblock(cfg->pid);
             return 0;
         default:
-            LOG("proc_syscall_exec: unknown command %d\n", cfg->cmd);
+            log_err("proc_syscall_exec: unknown command %d\n", cfg->cmd);
             return E_INVAL;
     }
 }

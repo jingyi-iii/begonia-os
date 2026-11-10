@@ -133,7 +133,7 @@ void isr_dispatch(isr_frame *f)
 
     int major = f->vector - 32;
     if (major < 0 || major >= MAX_IRQ_LINE) {
-        LOG("isr_dispatch: invalid major");
+        log_err("isr_dispatch: invalid major");
         return;
     }
 
@@ -197,13 +197,13 @@ int irq_request(irq **out, const char* name, u32 major,
     spinlock_unlock_irqrestore(&create_lock, eflags);
 
     if (ret) {
-        LOG("irq_request: failed to init the irqline with major");
+        log_err("irq_request: failed to init the irqline with major");
         return ret;
     }
 
     ret = irq_alloc(major, minor, name, cb_param, cb, out);
     if (ret) {
-        LOG("irq_request: failed to alloc irq structure");
+        log_err("irq_request: failed to alloc irq structure");
         return ret;
     }
 
@@ -213,7 +213,7 @@ int irq_request(irq **out, const char* name, u32 major,
     if (minor == IRQ_ANY_MINOR) {
         ret = irqline_get_available_minor_locked(line, &minor);
         if (ret) {
-            LOG("irq_request: no free minor on major");
+            log_err("irq_request: no free minor on major");
             ret = E_IRQ_NOTAVAIL;
             goto failed;
         }
@@ -223,7 +223,7 @@ int irq_request(irq **out, const char* name, u32 major,
     list_for_each(each, &line->irqs) {
         irq* p = list_entry(each, irq, node_in_irqline);
         if (p->minor == minor) {
-            LOG("irq_request: minor already exists");
+            log_warn("irq_request: minor already exists");
             ret = E_IRQ_INUSE;
             goto failed;
         }
