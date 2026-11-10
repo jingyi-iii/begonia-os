@@ -39,7 +39,7 @@ ELF     := $(BUILD)/boot.elf
 ISO     := $(BUILD)/boot.iso
 ISODIR  := $(BUILD)/iso
 
-.PHONY: all run iso run-iso clean
+.PHONY: all run iso run-iso clean demo run-demo
 
 all: $(ELF)
 
@@ -139,6 +139,25 @@ $(BUILD)/kernel.o: $(KERNEL_DIR)/kernel.c $(INC_DIR)/boot.h \
 
 $(ELF): $(OBJ) linker.ld
 	$(LD) -m elf_i386 -T linker.ld -o $@ $(OBJ)
+
+# demo/: freestanding programs that link against the kernel objects to
+# exercise one subsystem.  They supply their own kmain, so kernel.o stays out.
+DEMO_ELF := $(BUILD)/demo.elf
+DEMO_OBJ := $(filter-out $(BUILD)/kernel.o,$(OBJ)) $(BUILD)/log_colors.o
+
+$(BUILD)/log_colors.o: demo/log_colors.c $(INC_DIR)/log.h \
+                       $(INC_DIR)/boot.h $(INC_DIR)/errno.h \
+                       $(INC_DIR)/typedefs.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+demo: $(DEMO_ELF)
+
+$(DEMO_ELF): $(DEMO_OBJ) linker.ld
+	$(LD) -m elf_i386 -T linker.ld -o $@ $(DEMO_OBJ)
+
+run-demo: $(DEMO_ELF)
+	@echo "Booting the log colour demo in qemu..."
+	$(QEMU) -kernel $(DEMO_ELF) -nographic -device isa-debug-exit || true
 
 # Fast path: qemu's built-in Multiboot loader.
 run: $(ELF)
