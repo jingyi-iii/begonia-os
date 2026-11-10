@@ -33,7 +33,7 @@ OBJ     := $(BUILD)/boot.o $(BUILD)/cpu.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)
            $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o \
            $(BUILD)/task.o $(BUILD)/task_asm.o \
            $(BUILD)/string.o $(BUILD)/spinlock.o $(BUILD)/heap.o \
-           $(BUILD)/process.o $(BUILD)/irq.o $(BUILD)/syscall.o $(BUILD)/log.o \
+           $(BUILD)/process.o $(BUILD)/irq.o $(BUILD)/syscall.o $(BUILD)/log.o $(BUILD)/rbtree.o \
            $(BUILD)/kernel.o
 ELF     := $(BUILD)/boot.elf
 ISO     := $(BUILD)/boot.iso
@@ -139,6 +139,11 @@ $(BUILD)/kernel.o: $(KERNEL_DIR)/kernel.c $(INC_DIR)/boot.h \
 
 $(ELF): $(OBJ) linker.ld
 	$(LD) -m elf_i386 -T linker.ld -o $@ $(OBJ)
+
+# rbtree.c: a red-black tree over caller-owned nodes.
+$(BUILD)/rbtree.o: $(LIB_DIR)/rbtree.c $(INC_DIR)/rbtree.h \
+                    $(INC_DIR)/heap.h $(INC_DIR)/typedefs.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 # demo/: freestanding programs that link against the kernel objects to
 # exercise one subsystem.  They supply their own kmain, so kernel.o stays out.
