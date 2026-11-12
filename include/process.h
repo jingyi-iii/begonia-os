@@ -44,6 +44,13 @@ typedef struct {
     list_node       children;
 } pcb;
 
+typedef struct wait_queue {
+    list_node waiters;
+} wait_queue;
+
+static inline void wait_queue_init(wait_queue* wq) { list_init(&wq->waiters); }
+#define DECLARE_WAIT_QUEUE(name) wait_queue name = { { &(name.waiters), &(name.waiters) } }
+
 typedef struct {
     i32             tid;
     task_ctx        ctx;
@@ -53,8 +60,12 @@ typedef struct {
 
     list_node       node;
     list_node       this_child;
+
+    list_node       wait_node;
+    wait_queue*     waiting_on;
 } tcb;
 
+void    thread_start        (void);
 i32     thread_create       (task_priv priv, task_entry entry,
                              void* param, pcb* parent);
 void    thread_exit         (i32 tid);
@@ -62,7 +73,10 @@ void    thread_yield        (void);
 void    thread_block        (i32 tid);
 void    thread_unblock      (i32 tid);
 
-void    thread_start        (void);
+void    thread_wait_on      (wait_queue* wq);
+void    thread_wake_one     (wait_queue* wq);
+void    thread_wake_by_tid  (wait_queue* wq, i32 tid);
+void    thread_wake_all     (wait_queue* wq);
 
 i32     proc_create         (proc_priv priv, task_entry entry, void* param);
 void    proc_exit           (i32 pid);

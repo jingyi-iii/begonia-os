@@ -29,6 +29,17 @@ static inline void list_add(list_node* new_node, list_node* head)
     head->next = new_node;
 }
 
+static inline void list_add_tail(list_node* new_node, list_node* head)
+{
+    if (!new_node || !head)
+        return;
+
+    head->prev->next = new_node;
+    new_node->prev = head->prev;
+    head->prev = new_node;
+    new_node->next = head;
+}
+
 static inline void list_del(list_node* node)
 {
     if (!node)

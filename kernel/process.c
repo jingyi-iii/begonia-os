@@ -12,6 +12,10 @@ typedef enum {
     THREAD_CTRL_YIELD,
     THREAD_CTRL_BLOCK,
     THREAD_CTRL_UNBLOCK,
+    THREAD_CTRL_WAIT_ON,
+    THREAD_CTRL_WAKE_ONE,
+    THREAD_CTRL_WAKE_BY_TID,
+    THREAD_CTRL_WAKE_ALL,
     PROC_CTRL_CREATE,
     PROC_CTRL_EXIT,
     PROC_CTRL_BLOCK,
@@ -130,6 +134,10 @@ static inline void thread_release_zombies(void)
         if (thread->state == TS_ZOMBIE) {
             list_del(&thread->node);
             list_del(&thread->this_child);
+            if (thread->waiting_on) {
+                list_del(&thread->wait_node);
+                thread->waiting_on = 0;
+            }
             memset(thread, 0, sizeof(tcb));
             free(thread);
         }
@@ -240,8 +248,10 @@ i32 thread_create(task_priv priv, task_entry entry, void* param, pcb* parent)
     thread->priv = (thread_priv)priv;
     thread->parent = parent;
     thread->state = TS_READY;
+    thread->waiting_on = 0;
     list_init(&thread->node);
     list_init(&thread->this_child);
+    list_init(&thread->wait_node);
 
     eflags = spinlock_lock_irqsave(&schedule_lock);
     if (parent)
@@ -270,6 +280,10 @@ void thread_exit(i32 tid)
         u32 eflags = spinlock_lock_irqsave(&schedule_lock);
         list_del(&thread->node);
         list_del(&thread->this_child);
+        if (thread->waiting_on) {
+            list_del(&thread->wait_node);
+            thread->waiting_on = 0;
+        }
         spinlock_unlock_irqrestore(&schedule_lock, eflags);
         memset(thread, 0, sizeof(tcb));
         free(thread);
@@ -348,11 +362,167 @@ void thread_unblock(i32 tid)
     u32 eflags = 0;
     
     thread = thread_get_by_tid(tid);
-    if (!thread || thread->state != TS_PENDING)
-        return;
-    
     eflags = spinlock_lock_irqsave(&schedule_lock);
+    if (!thread || thread->state != TS_PENDING) {
+        spinlock_unlock_irqrestore(&schedule_lock, eflags);
+        return;
+    }
+    
     thread->state = TS_READY;
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
+}
+
+void thread_wait_on(wait_queue* wq)
+{
+    if (!wq) {
+        log_warn("%s: wait queue is null\n", __func__);
+        return;
+    }
+
+    if (!may_run_directly()) {
+        proc_thread_ctrl config = {0};
+        config.cmd = THREAD_CTRL_WAIT_ON;
+        config.param = (void*)wq;
+        syscall(SYSCALL_CTRL_ID_PROC, &config, sizeof(config));
+        return;
+    }
+
+    tcb* thread = thread_get_current();
+    if (!thread) {
+        log_warn("thread_wait_on: no current thread\n");
+        return;
+    }
+
+    u32 eflags = spinlock_lock_irqsave(&schedule_lock);
+    if (thread->waiting_on) {
+        log_warn("%s: thread %d is already waiting\n", __func__, thread->tid);
+        spinlock_unlock_irqrestore(&schedule_lock, eflags);
+        return;
+    }
+
+    thread->waiting_on = wq;
+    thread->state = TS_PENDING;
+    list_add_tail(&thread->wait_node, &wq->waiters);
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
+
+    if (!thread_switch(TS_PENDING, thread_get_next_runnable(thread))) {
+        u32 f = spinlock_lock_irqsave(&schedule_lock);
+        thread->state = TS_RUNNING;
+        thread->waiting_on = 0;
+        list_del(&thread->wait_node);
+        spinlock_unlock_irqrestore(&schedule_lock, f);
+
+        log_warn("thread_wait_on: nothing else can run, not blocking\n");
+        return;
+    }
+}
+
+void thread_wake_one(wait_queue* wq)
+{
+    if (!wq) {
+        log_warn("%s: wait queue is null\n", __func__);
+        return;
+    }
+
+    if (!may_run_directly()) {
+        proc_thread_ctrl config = {0};
+        config.cmd = THREAD_CTRL_WAKE_ONE;
+        config.param = (void*)wq;
+        syscall(SYSCALL_CTRL_ID_PROC, &config, sizeof(config));
+        return;
+    }
+
+    u32 eflags = spinlock_lock_irqsave(&schedule_lock);
+    if (list_empty(&wq->waiters)) {
+        spinlock_unlock_irqrestore(&schedule_lock, eflags);
+        return;
+    }
+
+    list_for_each_safe(pos, n, &wq->waiters) {
+        list_node* node = pos;
+        tcb* thread = list_entry(node, tcb, wait_node);
+
+        thread->waiting_on = 0;
+        list_del(node);
+        if (thread->state == TS_PENDING)
+            thread->state = TS_READY;
+
+        spinlock_unlock_irqrestore(&schedule_lock, eflags);
+        return;
+    }
+
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
+}
+
+void thread_wake_by_tid(wait_queue* wq, i32 tid)
+{
+    if (!wq) {
+        log_warn("%s: wait queue is null\n", __func__);
+        return;
+    }
+
+    if (!may_run_directly()) {
+        proc_thread_ctrl config = {0};
+        config.cmd = THREAD_CTRL_WAKE_BY_TID;
+        config.param = (void*)wq;
+        config.tid = tid;
+        syscall(SYSCALL_CTRL_ID_PROC, &config, sizeof(config));
+        return;
+    }
+
+    u32 eflags = spinlock_lock_irqsave(&schedule_lock);
+    if (list_empty(&wq->waiters)) {
+        spinlock_unlock_irqrestore(&schedule_lock, eflags);
+        return;
+    }
+
+    list_for_each_safe(pos, n, &wq->waiters) {
+        list_node* node = pos;
+        tcb* thread = list_entry(node, tcb, wait_node);
+
+        if (thread->tid != tid)
+            continue;
+
+        thread->waiting_on = 0;
+        list_del(node);
+        if (thread->state == TS_PENDING)
+            thread->state = TS_READY;
+        break;
+    }
+
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
+}
+
+void thread_wake_all(wait_queue* wq)
+{
+    if (!wq) {
+        log_warn("%s: wait queue is null\n", __func__);
+        return;
+    }
+
+    if (!may_run_directly()) {
+        proc_thread_ctrl config = {0};
+        config.cmd = THREAD_CTRL_WAKE_ALL;
+        config.param = (void*)wq;
+        syscall(SYSCALL_CTRL_ID_PROC, &config, sizeof(config));
+        return;
+    }
+
+    u32 eflags = spinlock_lock_irqsave(&schedule_lock);
+    if (list_empty(&wq->waiters)) {
+        spinlock_unlock_irqrestore(&schedule_lock, eflags);
+        return;
+    }
+
+    list_for_each_safe(pos, n, &wq->waiters) {
+        list_node* node = pos;
+        tcb* thread = list_entry(node, tcb, wait_node);
+
+        thread->waiting_on = 0;
+        list_del(node);
+        if (thread->state == TS_PENDING)
+            thread->state = TS_READY;
+    }
     spinlock_unlock_irqrestore(&schedule_lock, eflags);
 }
 
@@ -433,6 +603,10 @@ void proc_exit(i32 pid)
         // do not call thread_exit() here to prevent schedule
         list_del(&thread->node);
         list_del(&thread->this_child);
+        if (thread->waiting_on) {
+            list_del(&thread->wait_node);
+            thread->waiting_on = 0;
+        }
         memset(thread, 0, sizeof(tcb));
         free(thread);
     }
@@ -572,6 +746,18 @@ static int proc_syscall_exec(void* data)
             return 0;
         case THREAD_CTRL_UNBLOCK:
             thread_unblock(cfg->tid);
+            return 0;
+        case THREAD_CTRL_WAIT_ON:
+            thread_wait_on((wait_queue*)cfg->param);
+            return 0;
+        case THREAD_CTRL_WAKE_ONE:
+            thread_wake_one((wait_queue*)cfg->param);
+            return 0;
+        case THREAD_CTRL_WAKE_BY_TID:
+            thread_wake_by_tid((wait_queue*)cfg->param, cfg->tid);
+            return 0;
+        case THREAD_CTRL_WAKE_ALL:
+            thread_wake_all((wait_queue*)cfg->param);
             return 0;
         case PROC_CTRL_CREATE:
             return proc_create((proc_priv)cfg->priv, cfg->entry, cfg->param);
