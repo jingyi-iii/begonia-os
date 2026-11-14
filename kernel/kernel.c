@@ -4,6 +4,7 @@
 #include "process.h"
 #include "pic.h"
 #include "syscall.h"
+#include "mailbox.h"
 
 void first_task(void)
 {
@@ -32,6 +33,7 @@ void kmain(void)
     pit_init(100);
 
     process_env_init();
+    mailbox_syscall_init();
     thread_create(TASK_PRIV_USER, second_task, 0, 0);
     thread_create(TASK_PRIV_KERNEL, first_task, 0, 0);
     thread_start();

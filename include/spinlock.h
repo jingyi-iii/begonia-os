@@ -24,11 +24,14 @@ static inline void spinlock_init(spinlock* lock)
     lock->locked = 0;
 }
 
+#define DECLARE_SPINLOCK(name) spinlock name = SPINLOCK_INIT
+
 u32  spinlock_lock_irqsave(spinlock* lock);
 void spinlock_unlock_irqrestore(spinlock* lock, u32 flags);
 
 /* 0 when the lock was taken, -EBUSY when someone else holds it.  On success
  * *flags receives what spinlock_unlock_irqrestore() must be given. */
 int  spinlock_trylock_irqsave(spinlock* lock, u32* flags);
+
 
 #endif
