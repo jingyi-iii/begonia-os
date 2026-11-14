@@ -73,7 +73,9 @@ void    thread_yield        (void);
 void    thread_block        (i32 tid);
 void    thread_unblock      (i32 tid);
 
-void    thread_wait_on      (wait_queue* wq);
+i32     thread_prepare_wait (wait_queue* wq);
+i32     thread_wait         (void);
+i32     thread_has_waiters  (wait_queue* wq);
 void    thread_wake_one     (wait_queue* wq);
 void    thread_wake_by_tid  (wait_queue* wq, i32 tid);
 void    thread_wake_all     (wait_queue* wq);

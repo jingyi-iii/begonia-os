@@ -12,7 +12,9 @@ typedef enum {
     THREAD_CTRL_YIELD,
     THREAD_CTRL_BLOCK,
     THREAD_CTRL_UNBLOCK,
-    THREAD_CTRL_WAIT_ON,
+    THREAD_CTRL_PREPARE_WAIT,
+    THREAD_CTRL_WAIT,
+    THREAD_CTRL_HAS_WAITERS,
     THREAD_CTRL_WAKE_ONE,
     THREAD_CTRL_WAKE_BY_TID,
     THREAD_CTRL_WAKE_ALL,
@@ -170,7 +172,7 @@ static int thread_switch(thread_state from_state, tcb* to)
 
     if (!to || to->state != TS_READY) {
         spinlock_unlock_irqrestore(&schedule_lock, eflags);
-        return 0;
+        return E_INVAL;
     }
 
     tcb* curr = thread_get_current();
@@ -185,7 +187,7 @@ static int thread_switch(thread_state from_state, tcb* to)
     thread_release_zombies();
     proc_release_zombies();
 
-    return 1;
+    return 0;
 }
 
 void thread_start(void)
@@ -193,7 +195,7 @@ void thread_start(void)
     if (thread_get_current())
         return;
 
-    if (!thread_switch(TS_NULL, thread_get_next_runnable(0)))
+    if (thread_switch(TS_NULL, thread_get_next_runnable(0)))
         cpu_halt();
 }
 
@@ -372,32 +374,31 @@ void thread_unblock(i32 tid)
     spinlock_unlock_irqrestore(&schedule_lock, eflags);
 }
 
-void thread_wait_on(wait_queue* wq)
+i32 thread_prepare_wait(wait_queue* wq)
 {
     if (!wq) {
         log_warn("%s: wait queue is null\n", __func__);
-        return;
+        return E_INVAL;
     }
 
     if (!may_run_directly()) {
         proc_thread_ctrl config = {0};
-        config.cmd = THREAD_CTRL_WAIT_ON;
+        config.cmd = THREAD_CTRL_PREPARE_WAIT;
         config.param = (void*)wq;
-        syscall(SYSCALL_CTRL_ID_PROC, &config, sizeof(config));
-        return;
+        return syscall(SYSCALL_CTRL_ID_PROC, &config, sizeof(config));
     }
 
     tcb* thread = thread_get_current();
     if (!thread) {
-        log_warn("thread_wait_on: no current thread\n");
-        return;
+        log_warn("%s: no current thread\n", __func__);
+        return E_NOTFOUND;
     }
 
     u32 eflags = spinlock_lock_irqsave(&schedule_lock);
     if (thread->waiting_on) {
         log_warn("%s: thread %d is already waiting\n", __func__, thread->tid);
         spinlock_unlock_irqrestore(&schedule_lock, eflags);
-        return;
+        return E_BUSY;
     }
 
     thread->waiting_on = wq;
@@ -405,16 +406,57 @@ void thread_wait_on(wait_queue* wq)
     list_add_tail(&thread->wait_node, &wq->waiters);
     spinlock_unlock_irqrestore(&schedule_lock, eflags);
 
-    if (!thread_switch(TS_PENDING, thread_get_next_runnable(thread))) {
+    return 0;
+}
+
+i32 thread_wait(void)
+{
+    if (!may_run_directly()) {
+        proc_thread_ctrl config = {0};
+        config.cmd = THREAD_CTRL_WAIT;
+        return syscall(SYSCALL_CTRL_ID_PROC, &config, sizeof(config));
+    }
+
+    tcb* thread = thread_get_current();
+    if (!thread) {
+        log_warn("%s: no current thread\n", __func__);
+        return E_NOTFOUND;
+    }
+
+    if (thread_switch(TS_PENDING, thread_get_next_runnable(thread))) {
         u32 f = spinlock_lock_irqsave(&schedule_lock);
         thread->state = TS_RUNNING;
         thread->waiting_on = 0;
         list_del(&thread->wait_node);
         spinlock_unlock_irqrestore(&schedule_lock, f);
 
-        log_warn("thread_wait_on: nothing else can run, not blocking\n");
-        return;
+        log_warn("%s: nothing else can run, not blocking\n", __func__);
+        return E_AGAIN;
     }
+
+    return 0;
+}
+
+i32 thread_has_waiters(wait_queue* wq)
+{
+    if (!wq) {
+        log_warn("%s: wait queue is null\n", __func__);
+        return E_INVAL;
+    }
+
+    if (!may_run_directly()) {
+        proc_thread_ctrl config = {0};
+        config.cmd = THREAD_CTRL_HAS_WAITERS;
+        config.param = (void*)wq;
+        return syscall(SYSCALL_CTRL_ID_PROC, &config, sizeof(config));
+    }
+
+    i32 has_waiters = 0;
+    u32 eflags = spinlock_lock_irqsave(&schedule_lock);
+    has_waiters = !list_empty(&wq->waiters);
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
+
+    return has_waiters;
 }
 
 void thread_wake_one(wait_queue* wq)
@@ -747,9 +789,12 @@ static int proc_syscall_exec(void* data)
         case THREAD_CTRL_UNBLOCK:
             thread_unblock(cfg->tid);
             return 0;
-        case THREAD_CTRL_WAIT_ON:
-            thread_wait_on((wait_queue*)cfg->param);
-            return 0;
+        case THREAD_CTRL_PREPARE_WAIT:
+            return thread_prepare_wait((wait_queue*)cfg->param);
+        case THREAD_CTRL_WAIT:
+            return thread_wait();
+        case THREAD_CTRL_HAS_WAITERS:
+            return thread_has_waiters((wait_queue*)cfg->param);
         case THREAD_CTRL_WAKE_ONE:
             thread_wake_one((wait_queue*)cfg->param);
             return 0;

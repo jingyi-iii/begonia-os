@@ -33,7 +33,7 @@ OBJ     := $(BUILD)/boot.o $(BUILD)/cpu.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)
            $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o \
            $(BUILD)/task.o $(BUILD)/task_asm.o \
            $(BUILD)/string.o $(BUILD)/spinlock.o $(BUILD)/heap.o \
-           $(BUILD)/process.o $(BUILD)/irq.o $(BUILD)/syscall.o $(BUILD)/log.o $(BUILD)/rbtree.o \
+           $(BUILD)/process.o $(BUILD)/irq.o $(BUILD)/syscall.o $(BUILD)/log.o $(BUILD)/rbtree.o $(BUILD)/semaphore.o \
            $(BUILD)/kernel.o
 ELF     := $(BUILD)/boot.elf
 ISO     := $(BUILD)/boot.iso
@@ -143,6 +143,14 @@ $(ELF): $(OBJ) linker.ld
 # rbtree.c: a red-black tree over caller-owned nodes.
 $(BUILD)/rbtree.o: $(LIB_DIR)/rbtree.c $(INC_DIR)/rbtree.h \
                     $(INC_DIR)/heap.h $(INC_DIR)/typedefs.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# semaphore.c: counting semaphores in front of a wait queue.
+$(BUILD)/semaphore.o: $(KERNEL_DIR)/semaphore.c $(INC_DIR)/semaphore.h \
+                      $(INC_DIR)/process.h $(INC_DIR)/spinlock.h \
+                      $(INC_DIR)/log.h $(INC_DIR)/heap.h \
+                      $(INC_DIR)/list.h $(INC_DIR)/errno.h \
+                      $(INC_DIR)/typedefs.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # demo/: freestanding programs that link against the kernel objects to
