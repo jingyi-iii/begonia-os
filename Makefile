@@ -34,7 +34,7 @@ OBJ     := $(BUILD)/boot.o $(BUILD)/cpu.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)
            $(BUILD)/task.o $(BUILD)/task_asm.o \
            $(BUILD)/string.o $(BUILD)/spinlock.o $(BUILD)/heap.o \
            $(BUILD)/process.o $(BUILD)/irq.o $(BUILD)/syscall.o $(BUILD)/log.o $(BUILD)/rbtree.o $(BUILD)/semaphore.o $(BUILD)/mailbox.o \
-           $(BUILD)/kernel.o
+           $(BUILD)/pmm.o $(BUILD)/kernel.o
 ELF     := $(BUILD)/boot.elf
 ISO     := $(BUILD)/boot.iso
 ISODIR  := $(BUILD)/iso
@@ -160,6 +160,12 @@ $(BUILD)/mailbox.o: $(KERNEL_DIR)/mailbox.c $(INC_DIR)/mailbox.h \
                     $(INC_DIR)/syscall.h $(INC_DIR)/list.h \
                     $(INC_DIR)/spinlock.h $(INC_DIR)/process.h \
                     $(INC_DIR)/typedefs.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# pmm.c: the 4KB bitmap physical page allocator (kernel/mm).
+$(BUILD)/pmm.o: $(KERNEL_DIR)/mm/pmm.c $(INC_DIR)/mm/pmm.h \
+                $(INC_DIR)/typedefs.h $(INC_DIR)/string.h \
+                $(INC_DIR)/spinlock.h $(INC_DIR)/log.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # demo/: freestanding programs that link against the kernel objects to

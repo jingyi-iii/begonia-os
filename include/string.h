@@ -8,5 +8,6 @@
 
 void* memset(void* dst, int value, u32 n);
 void* memcpy(void* dst, const void* src, u32 n);
+int   strcmp(const char* s1, const char* s2);
 
 #endif
