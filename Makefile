@@ -31,7 +31,7 @@ CFLAGS  := -m32 -O2 -ffreestanding -fno-pic -fno-stack-protector -fno-builtin \
 BUILD   := build
 OBJ     := $(BUILD)/boot.o $(BUILD)/cpu.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)/pic.o \
            $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o \
-           $(BUILD)/task.o $(BUILD)/task_asm.o \
+           $(BUILD)/task.o $(BUILD)/task_asm.o $(BUILD)/page.o \
            $(BUILD)/string.o $(BUILD)/spinlock.o $(BUILD)/heap.o \
            $(BUILD)/process.o $(BUILD)/irq.o $(BUILD)/syscall.o $(BUILD)/log.o $(BUILD)/rbtree.o $(BUILD)/semaphore.o $(BUILD)/mailbox.o \
            $(BUILD)/pmm.o $(BUILD)/kernel.o
@@ -166,6 +166,13 @@ $(BUILD)/mailbox.o: $(KERNEL_DIR)/mailbox.c $(INC_DIR)/mailbox.h \
 $(BUILD)/pmm.o: $(KERNEL_DIR)/mm/pmm.c $(INC_DIR)/mm/pmm.h \
                 $(INC_DIR)/typedefs.h $(INC_DIR)/string.h \
                 $(INC_DIR)/spinlock.h $(INC_DIR)/log.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# page.c: the bootstrap page directory, identity map and PMM hand-off.
+$(BUILD)/page.o: $(ARCH_DIR)/i686/page.c $(ARCH_DIR)/i686/page.h \
+                   $(INC_DIR)/mm/pmm.h $(INC_DIR)/typedefs.h \
+                   $(INC_DIR)/string.h $(INC_DIR)/spinlock.h \
+                   $(INC_DIR)/log.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # demo/: freestanding programs that link against the kernel objects to
