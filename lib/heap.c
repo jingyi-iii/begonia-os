@@ -51,28 +51,62 @@ static void heap_init(heappool* pool)
     spinlock_unlock_irqrestore(&pool->splock, eflags);
 }
 
-static void* heap_malloc(heappool* pool, unsigned int alloc_size)
+/*
+ * One allocator, one lock.  align is the minimum alignment of the payload
+ * the caller gets back: HEAP_ALIGN for malloc(), anything larger (a power of
+ * two) for malloc_aligned().
+ *
+ * A chunk header always sits exactly HEAP_HDR_SIZE bytes in front of the
+ * payload, because free() recovers the header with "pointer - HEAP_HDR_SIZE".
+ * So an over-aligned request cannot simply return a rounded-up address: the
+ * header has to move with it.  When the free chunk's payload is not aligned,
+ * the chunk is split in two:
+ *
+ *      chunk            base            data           tail
+ *      +--------+-------+------+--------+--------------+--------+
+ *      | header |  ...  | pad  | header |    payload   | header |
+ *      +--------+-------+------+--------+--------------+--------+
+ *                              ^ the user's chunk, at data - HEAP_HDR_SIZE
+ *
+ * The pad (and the tail, when it is big enough for a header) stay free, so
+ * the wasted bytes come back to the pool on the next merge.
+ */
+static void* heap_malloc(heappool* pool, unsigned int alloc_size, unsigned int align)
 {
     heapchunk* chunk = 0;
-    heapchunk* new_chunk = 0;
+    heapchunk* user = 0;
+    heapchunk* tail = 0;
+    u8* base = 0;
+    u8* data = 0;
     void* ret_addr = 0;
     unsigned int aligned_size;
     unsigned int req_size;
+    unsigned int prefix = 0;
+    unsigned int consumed;
+    unsigned int remaining;
 
     if (!pool->inited)
         heap_init(pool);
 
-    /* Round the request up so every payload is HEAP_ALIGN-aligned
-     * (chunk bases are HEAP_ALIGN multiples and so is the header). */
+    if ((align & (align - 1)) != 0)                 /* power of two only */
+        return 0;
+    if (align < HEAP_ALIGN)
+        align = HEAP_ALIGN;                         /* 0 means "no requirement" */
+
     /* Reject requests that cannot fit the pool: this also prevents u32
      * wrap of req_size (HEAP_HDR_SIZE + aligned_size) for absurd sizes,
      * which would bypass the avail_size check and corrupt the heap. */
-    if (alloc_size > HEAP_TOTAL_SIZE)
+    if (alloc_size > HEAP_TOTAL_SIZE || align > HEAP_TOTAL_SIZE)
         return 0;
     if (alloc_size > (0xFFFFFFFFu - (HEAP_ALIGN - 1)))   /* align overflow */
         return 0;
+
+    /* Round the request up so every payload is HEAP_ALIGN-aligned
+     * (chunk bases are HEAP_ALIGN multiples and so is the header). */
     aligned_size = (alloc_size + HEAP_ALIGN - 1) & ~(HEAP_ALIGN - 1);
     req_size = HEAP_HDR_SIZE + aligned_size;
+    if (align > HEAP_ALIGN)
+        req_size += align;              /* room to shift + split, see below */
 
     u32 eflags = spinlock_lock_irqsave(&pool->splock);
     if (req_size > pool->avail_size)
@@ -89,22 +123,52 @@ static void* heap_malloc(heappool* pool, unsigned int alloc_size)
     if (!chunk)
         goto ALLOC_FAIL;
 
-    new_chunk = (heapchunk*)((u8*)chunk + req_size);
-    if ((u8*)new_chunk + HEAP_HDR_SIZE <= (u8*)pool->pool + HEAP_TOTAL_SIZE) {
-        new_chunk->size = chunk->size - req_size;
-        new_chunk->used = 0;
-        list_add(&new_chunk->this_node, &chunk->this_node);
+    base = (u8*)chunk + HEAP_HDR_SIZE;
+    data = base;
+    if (align > HEAP_ALIGN && ((u32)base & (align - 1)) != 0) {
+        /* Shift far enough that the user chunk's header still starts at or
+         * after base: the payload lands on the next align boundary with a
+         * header-sized gap in front of it. */
+        data = (u8*)(((u32)base + HEAP_HDR_SIZE + align - 1) & ~(align - 1));
+        prefix = (unsigned int)((u32)data - HEAP_HDR_SIZE - (u32)base);
     }
 
-    ret_addr = (u8*)chunk + HEAP_HDR_SIZE;
-    memset(ret_addr, 0, alloc_size);
-    chunk->used = 1;
-    chunk->size = aligned_size;
+    consumed = prefix + HEAP_HDR_SIZE + aligned_size;
+    if (consumed > chunk->size)
+        goto ALLOC_FAIL;
 
-    pool->avail_size -= req_size;
+    remaining = chunk->size - consumed;
+
+    if (prefix) {
+        user            = (heapchunk*)(data - HEAP_HDR_SIZE);
+        user->size      = aligned_size;
+        user->used      = 1;
+        list_init(&user->this_node);
+        list_add(&user->this_node, &chunk->this_node);
+
+        chunk->size = prefix;           /* the pad in front stays free */
+        chunk->used = 0;
+    } else {
+        user            = chunk;
+        user->size      = aligned_size;
+        user->used      = 1;
+    }
+
+    if (remaining >= HEAP_HDR_SIZE) {
+        tail            = (heapchunk*)((u8*)user + HEAP_HDR_SIZE + aligned_size);
+        tail->size      = remaining - HEAP_HDR_SIZE;
+        tail->used      = 0;
+        list_init(&tail->this_node);
+        list_add(&tail->this_node, &user->this_node);
+    }
+
+    ret_addr = (u8*)user + HEAP_HDR_SIZE;
+    memset(ret_addr, 0, alloc_size);
+
+    pool->avail_size -= HEAP_HDR_SIZE + aligned_size;
     spinlock_unlock_irqrestore(&pool->splock, eflags);
 
-    return (void*)ret_addr;
+    return ret_addr;
 
 ALLOC_FAIL:
     spinlock_unlock_irqrestore(&pool->splock, eflags);
@@ -162,7 +226,12 @@ static void heap_free(heappool* pool, void* pointer)
 
 void* malloc(unsigned int alloc_size)
 {
-    return heap_malloc(&krn_pool, alloc_size);
+    return heap_malloc(&krn_pool, alloc_size, HEAP_ALIGN);
+}
+
+void* malloc_aligned(unsigned int alloc_size, unsigned int align)
+{
+    return heap_malloc(&krn_pool, alloc_size, align);
 }
 
 void free(void* p)
