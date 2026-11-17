@@ -95,16 +95,6 @@ static inline void tlb_flush_all(void)
     );
 }
 
-/*
- * The CR3/paging switch helpers below have no caller yet: the VMM owns the
- * address space and will call them once it lands.
- */
-static inline void load_cr3(u32 pde_addr)
-{
-    /* Writing CR3 flushes the TLB for all non-global entries */
-    __asm__ __volatile__("mov %0, %%cr3" : : "r"(pde_addr) : "memory");
-}
-
 static inline void page_enable_size_extensions(void)
 {
     __asm__ __volatile__(
@@ -132,7 +122,7 @@ static inline void page_enable(void)
     );
 }
 
-void page_map_4mb(u32 page_tbl, void* va, void* pa, u32 flags)
+void page_map_4mb(page_table* page_tbl, void* va, void* pa, u32 flags)
 {
     pde* pdes = (pde*)page_tbl;
     size_t pde_index = PD_INDEX(va);
@@ -166,7 +156,7 @@ void page_map_4mb(u32 page_tbl, void* va, void* pa, u32 flags)
     spinlock_unlock_irqrestore(&page_lock, eflags);
 }
 
-void page_unmap_4mb(u32 page_tbl, void* va)
+void page_unmap_4mb(page_table* page_tbl, void* va)
 {
     pde* pdes = (pde*)page_tbl;
     size_t pde_index = PD_INDEX(va);
@@ -247,7 +237,7 @@ static int split_4mb_pde(pde* p, pte* ptbl, u32 user_accessible)
     return 0;
 }
 
-int page_map_4kb(u32 page_tbl, void* va, void* pa, u32 flags)
+int page_map_4kb(page_table* page_tbl, void* va, void* pa, u32 flags)
 {
     pde* pdes = (pde*)page_tbl;
     size_t pde_index = PD_INDEX(va);
@@ -322,7 +312,7 @@ int page_map_4kb(u32 page_tbl, void* va, void* pa, u32 flags)
     return err;
 }
 
-void page_unmap_4kb(u32 page_tbl, void* va)
+void page_unmap_4kb(page_table* page_tbl, void* va)
 {
     pde* pdes = (pde*)page_tbl;
     size_t pde_index = PD_INDEX(va);
@@ -368,7 +358,7 @@ void page_unmap_4kb(u32 page_tbl, void* va)
     spinlock_unlock_irqrestore(&page_lock, eflags);
 }
 
-void page_map_4mb_range(u32 page_tbl, u32 start_pa, u32 end_pa, u32 flags)
+void page_map_4mb_range(page_table* page_tbl, u32 start_pa, u32 end_pa, u32 flags)
 {
     if (!page_tbl) {
         log_err("%s: invalid page table directory\n", __func__);
@@ -385,7 +375,7 @@ void page_map_4mb_range(u32 page_tbl, u32 start_pa, u32 end_pa, u32 flags)
     }
 }
 
-void page_map_4kb_range(u32 page_tbl, u32 start_pa, u32 end_pa, u32 flags)
+void page_map_4kb_range(page_table* page_tbl, u32 start_pa, u32 end_pa, u32 flags)
 {
     if (!page_tbl) {
         log_err("%s: invalid page table directory\n", __func__);
@@ -400,4 +390,98 @@ void page_map_4kb_range(u32 page_tbl, u32 start_pa, u32 end_pa, u32 flags)
     for (u32 pa = start_pa; pa < end_pa; pa += PAGE_SIZE) {
         page_map_4kb(page_tbl, (void*)pa, (void*)pa, flags);
     }
+}
+
+/*
+ * Deep-clone a page directory: every present second-level page table is
+ * copied into a fresh 4KB-aligned table, so the caller and the source can
+ * remap entries independently.  The leaf pages and any 4MB PDE are shared
+ * (this is a table copy, not copy-on-write).
+ *
+ * user_accessible forces the U/S bit on every copied PDE; leaf permissions
+ * still come from the PTEs (or from the 4MB page itself).
+ *
+ * On failure the directory is cleared and every table allocated so far is
+ * freed, so the caller only has to free the directory itself.
+ */
+int page_clone_table(page_table* new, page_table* from, int user_accessible)
+{
+    pde* new_pdes = (pde*)new;
+    pde* src_pdes = (pde*)from;
+    u32 eflags = 0;
+    int err = E_NOMEM;
+    u32 i = 0;
+
+    if (!new || !from || new == from) {
+        log_err("%s: invalid page tables\n", __func__);
+        return E_INVAL;
+    }
+
+    eflags = spinlock_lock_irqsave(&page_lock);
+
+    for (i = 0; i < 1024; i++) {
+        new_pdes[i].raw = src_pdes[i].raw;
+
+        if (!src_pdes[i].present || src_pdes[i].page_size) {
+            new_pdes[i].user = user_accessible ? 1 : 0;
+            continue;                   /* nothing below this PDE to copy */
+        }
+
+        pte* src_ptbl = ptbl_of_pde(&src_pdes[i]);
+        if (!src_ptbl) {
+            log_err("%s: PDE %u has no page table\n", __func__, i);
+            err = E_INVAL;
+            goto rollback;
+        }
+
+        pte* new_ptbl = (pte*)malloc_aligned(PAGE_SIZE, PAGE_SIZE);
+        if (!new_ptbl) {
+            log_err("%s: no memory for page table %u\n", __func__, i);
+            err = E_NOMEM;
+            goto rollback;
+        }
+
+        memcpy(new_ptbl, src_ptbl, PAGE_SIZE);
+        new_pdes[i].paddr = (u32)new_ptbl >> 12;
+        new_pdes[i].user  = user_accessible ? 1 : 0;
+    }
+
+    spinlock_unlock_irqrestore(&page_lock, eflags);
+    return 0;
+
+rollback:
+    while (i > 0) {
+        i--;
+        if (new_pdes[i].present && !new_pdes[i].page_size)
+            free(ptbl_of_pde(&new_pdes[i]));
+    }
+    memset(new_pdes, 0, PAGE_SIZE);
+    spinlock_unlock_irqrestore(&page_lock, eflags);
+    return err;
+}
+
+/*
+ * Free the second-level page tables of a cloned directory.  4MB entries are
+ * skipped: they are shared with the source directory, never allocated here.
+ * The directory itself belongs to the caller.
+ */
+int page_destroy_table(page_table* page_tbl)
+{
+    pde* pdes = (pde*)page_tbl;
+
+    if (!page_tbl) {
+        log_err("%s: invalid page table\n", __func__);
+        return E_INVAL;
+    }
+
+    for (u32 i = 0; i < 1024; i++) {
+        if (!pdes[i].present)
+            continue;
+
+        if (pdes[i].page_size == 0)
+            free(ptbl_of_pde(&pdes[i]));
+        pdes[i].raw = 0;
+    }
+
+    return 0;
 }

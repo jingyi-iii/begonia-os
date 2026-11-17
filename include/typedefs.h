@@ -16,5 +16,6 @@
 /* Wide enough to hold a pointer.  32-bit now; a 64-bit target has to
  * widen this to unsigned long. */
 #define uptr unsigned int
+#define iptr signed long
 
 #endif
