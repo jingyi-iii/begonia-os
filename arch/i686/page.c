@@ -1,5 +1,4 @@
 #include "page.h"
-#include "mm/pmm.h"
 #include "string.h"
 #include "spinlock.h"
 #include "log.h"
@@ -33,16 +32,6 @@
 
 #define IS_4MB_ALIGN(x)     (((u32)(x) & (0x400000 - 1)) == 0)
 #define IS_4KB_ALIGN(x)     (((u32)(x) & (4096 - 1)) == 0)
-#define IS_PAGE_ALIGNED(x)  (((u32)(x) & (PAGE_SIZE - 1)) == 0)
-
-#define USER_HEAP_BASE      (0xC0000000)
-#define USER_HEAP_SIZE      (0x01000000)                        /* 16 MB */
-#define USER_HEAP_END       (USER_HEAP_BASE + USER_HEAP_SIZE)   /* 0xC1000000 */
-#define USER_ELF_BASE       (0xC1000000)
-#define USER_ANON_BASE      (0xD0000000)
-
-#define KERNEL_BASE_VADDR   (0xF0000000)                        /* reserved kernel high-half */
-#define USER_SPACE_TOP      (KERNEL_BASE_VADDR)
 
 /* Page Directory Entry (PDE) */
 typedef union pde {
@@ -80,7 +69,6 @@ typedef union pte {
     } __attribute__((packed));
 } pte;
 
-static pde page_table_4gb[1024] __attribute__((aligned(PAGE_SIZE)));
 static DECLARE_SPINLOCK(page_lock);
 
 static inline pte* ptbl_of_pde(pde* p)
@@ -93,17 +81,28 @@ static inline void tlb_invlpg(u32 vaddr)
     __asm__ __volatile__("invlpg (%0)" : : "r"(vaddr) : "memory");
 }
 
+/*
+ * Full TLB flush by reloading CR3.  Needed after a page table is freed:
+ * invlpg only drops the entries of one address, while the paging-structure
+ * caches may still hold the (now freed) table for the whole 4MB region.
+ */
+static inline void tlb_flush_all(void)
+{
+    __asm__ __volatile__(
+        "mov    %%cr3, %%eax\n\t"
+        "mov    %%eax, %%cr3\n\t"
+        : : : "eax", "memory"
+    );
+}
+
+/*
+ * The CR3/paging switch helpers below have no caller yet: the VMM owns the
+ * address space and will call them once it lands.
+ */
 static inline void load_cr3(u32 pde_addr)
 {
     /* Writing CR3 flushes the TLB for all non-global entries */
     __asm__ __volatile__("mov %0, %%cr3" : : "r"(pde_addr) : "memory");
-}
-
-static inline u32 get_cr3(void)
-{
-    u32 cr3 = 0;
-    __asm__ __volatile__("mov %%cr3, %0" : "=r"(cr3));
-    return cr3;
 }
 
 static inline void page_enable_size_extensions(void)
@@ -114,7 +113,6 @@ static inline void page_enable_size_extensions(void)
         "mov    %%eax,          %%cr4\n\t"
         : : : "eax", "memory"
     );
-    log("%s: PSE enabled (4MB pages)\n", __func__);
 }
 
 static inline void page_enable(void)
@@ -139,22 +137,22 @@ void page_map_4mb(u32 page_tbl, void* va, void* pa, u32 flags)
     pde* pdes = (pde*)page_tbl;
     size_t pde_index = PD_INDEX(va);
 
-    if (pde_index >= 1024) {
-        log_err("page_map_4mb: virtual address out of range(4GB)");
-        return;
-    }
-
     if (!pdes) {
-        log_err("page_map_4mb: invalid page_tbl\n");
+        log_err("%s: invalid page table directory\n", __func__);
         return;
     }
 
     if (!IS_4MB_ALIGN(va) || !IS_4MB_ALIGN(pa)) {
-        log_err("page_map_4mb: addresses must be 4MB-aligned");
+        log_err("%s: addresses must be 4MB-aligned\n", __func__);
         return;
     }
 
     u32 eflags = spinlock_lock_irqsave(&page_lock);
+
+    /* free() takes the heap lock, which never takes page_lock: no inversion */
+    if (pdes[pde_index].present && !pdes[pde_index].page_size)
+        free(ptbl_of_pde(&pdes[pde_index]));
+
     pdes[pde_index].raw         = 0;
     pdes[pde_index].page_size   = 1;    /* 4MB page */
     pdes[pde_index].present     = (flags & PTE_PRESENT)  ? 1 : 0;
@@ -173,41 +171,38 @@ void page_unmap_4mb(u32 page_tbl, void* va)
     pde* pdes = (pde*)page_tbl;
     size_t pde_index = PD_INDEX(va);
 
-    if (pde_index >= 1024) {
-        log_err("%s: virtual address out of range(4GB)\n", __func__);
-        return;
-    }
-
     if (!pdes) {
-        log_err("%s: invalid page_tbl\n", __func__);
+        log_err("%s: invalid page table directory\n", __func__);
         return;
     }
 
     u32 eflags = spinlock_lock_irqsave(&page_lock);
+
+    /* unmapping a 4MB page also drops any 4KB table underneath it */
+    if (pdes[pde_index].present && !pdes[pde_index].page_size) {
+        free(ptbl_of_pde(&pdes[pde_index]));
+        tlb_flush_all();
+    }
+
     pdes[pde_index].raw = 0;
     tlb_invlpg((u32)va);
     spinlock_unlock_irqrestore(&page_lock, eflags);
 }
 
-static int split_4mb_pde(u32 page_tbl, u32 user_accessible)
+/*
+ * Turn one 4MB PDE into a page table that mirrors it page by page, stored in
+ * the table the caller allocated (ptbl).  The caller holds page_lock.
+ */
+static int split_4mb_pde(pde* p, pte* ptbl, u32 user_accessible)
 {
-    pde* p = (pde*)page_tbl;
-    pte* ptl = 0;
-
-    if (!p) {
-        log_err("split_4mb_pde: invalid page_tbl");
-        return -1;
+    if (!p || !ptbl) {
+        log_err("%s: null argument\n", __func__);
+        return E_INVAL;
     }
 
     if (!p->present || !p->page_size) {
-        log_err("split_4mb_pde: PDE is not a 4MB page");
-        return -1;
-    }
-
-    ptl = (pte*)malloc(4096);
-    if (!ptl) {
-        log_err("split_4mb_pde: failed to allocate page table");
-        return E_NOMEM;
+        log_err("%s: PDE is not a 4MB page\n", __func__);
+        return E_INVAL;
     }
 
     /*
@@ -219,29 +214,34 @@ static int split_4mb_pde(u32 page_tbl, u32 user_accessible)
      * sibling PTEs (kernel pages stay supervisor); page_map_4kb() then
      * sets just the one target PTE to the requested flags.
      */
-    int orig_user = p->user;
-    if (user_accessible && p->user == 0)
+    u32 orig_user = p->user;
+    if (user_accessible && !p->user)
         p->user = 1;
 
     for (size_t i = 0; i < 1024; i++) {
-        ptl[i].raw          = 0;
-        ptl[i].present      = p->present;
-        ptl[i].rw           = p->rw;
-        ptl[i].user         = orig_user;
-        ptl[i].pwt          = p->pwt;
-        ptl[i].pcd          = p->pcd;
-        ptl[i].global       = p->global;
-        ptl[i].paddr        = p->paddr + i;
+        ptbl[i].raw     = 0;
+        ptbl[i].present = p->present;
+        ptbl[i].rw      = p->rw;
+        ptbl[i].user    = orig_user;
+        ptbl[i].pwt     = p->pwt;
+        ptbl[i].pcd     = p->pcd;
+        ptbl[i].global  = p->global;
+        ptbl[i].paddr   = p->paddr + i;
     }
 
     {
         pde new_pde;
-        new_pde.raw         = p->raw;
-        new_pde.present     = 1;
-        new_pde.rw          = 1;         /* writable PTEs take effect */
-        new_pde.page_size   = 0;  /* 4KB page table */
-        new_pde.paddr       = (u32)ptl >> 12;
-        p->raw              = new_pde.raw;
+        new_pde.raw       = p->raw;
+        new_pde.present   = 1;
+        new_pde.rw        = 1;      /* writable PTEs take effect */
+        new_pde.page_size = 0;      /* 4KB page table */
+        new_pde.dirty     = 0;      /* bit 6 is only meaningful for a 4MB page */
+        /*
+         * Identity-mapped kernel: the pointer is also the physical address.
+         * The VMM has to translate this once it owns the address space.
+         */
+        new_pde.paddr     = (u32)ptbl >> 12;
+        p->raw            = new_pde.raw;
     }
 
     return 0;
@@ -252,60 +252,74 @@ int page_map_4kb(u32 page_tbl, void* va, void* pa, u32 flags)
     pde* pdes = (pde*)page_tbl;
     size_t pde_index = PD_INDEX(va);
     size_t pte_index = PT_INDEX(va);
+    int err = 0;
 
-    if (pde_index >= 1024 || pte_index >= 1024) {
-        log_err("page_map_4kb: virtual address out of range");
+    if (!pdes) {
+        log_err("%s: invalid page table directory\n", __func__);
         return E_INVAL;
     }
 
-    if (!pdes) {
-        log_err("page_map_4kb: invalid page_tbl");
+    if (!IS_4KB_ALIGN(va) || !IS_4KB_ALIGN(pa)) {
+        log_err("%s: addresses must be 4KB-aligned\n", __func__);
         return E_INVAL;
     }
 
     u32 eflags = spinlock_lock_irqsave(&page_lock);
 
-    /*
-     * If a 4MB page already covers this virtual address, split it
-     * into 4KB page tables first so we can create a fine-grained
-     * 4KB mapping alongside the existing identity map.
-     */
     if (pdes[pde_index].present && pdes[pde_index].page_size) {
-        if (split_4mb_pde((u32)&pdes[pde_index], flags & PTE_USER) != 0) {
-            log_err("page_map_4kb: failed to split 4MB PDE at index %u", pde_index);
-            spinlock_unlock_irqrestore(&page_lock, eflags);
-            return E_NOMEM;
+        /*
+         * If a 4MB page already covers this virtual address, split it into
+         * a 4KB page table first so we can create a fine-grained mapping
+         * alongside the existing identity map.
+         */
+        pte* ptbl = (pte*)malloc_aligned(PAGE_SIZE, PAGE_SIZE);
+        if (!ptbl) {
+            err = E_NOMEM;
+        } else if (split_4mb_pde(&pdes[pde_index], ptbl, flags & PTE_USER) != 0) {
+            free(ptbl);
+            err = E_INVAL;
         }
+    } else if (!pdes[pde_index].present) {
+        pte* ptbl = (pte*)malloc_aligned(PAGE_SIZE, PAGE_SIZE);
+        if (!ptbl) {
+            err = E_NOMEM;
+        } else {
+            memset(ptbl, 0, PAGE_SIZE);
+
+            pdes[pde_index].raw     = 0;
+            pdes[pde_index].present = 1;
+            pdes[pde_index].rw      = 1;
+            pdes[pde_index].user    = (flags & PTE_USER) ? 1 : 0;
+            pdes[pde_index].pwt     = (flags & PTE_PWT)  ? 1 : 0;
+            pdes[pde_index].pcd     = (flags & PTE_PCD)  ? 1 : 0;
+            pdes[pde_index].paddr   = (u32)ptbl >> 12;
+        }
+    } else if ((flags & PTE_USER) && !pdes[pde_index].user) {
+        /* a supervisor PDE would hide the user page from ring 3 */
+        pdes[pde_index].user = 1;
     }
 
-    if (!pdes[pde_index].present) {
-        u32 pt_pa = (u32)malloc(4096);
-        if (!pt_pa) {
-            log_err("page_map_4kb: failed to allocate page table for vaddr 0x%x", va);
-            spinlock_unlock_irqrestore(&page_lock, eflags);
-            return E_NOMEM;
-        }
+    if (!err) {
+        pte* ptbl = ptbl_of_pde(&pdes[pde_index]);
 
-        pdes[pde_index].raw     = 0;
-        pdes[pde_index].present = 1;
-        pdes[pde_index].rw      = 1;
-        pdes[pde_index].user    = (flags & PTE_USER) ? 1 : 0;
-        pdes[pde_index].paddr   = pt_pa >> 12;
+        ptbl[pte_index].raw     = 0;
+        ptbl[pte_index].present = (flags & PTE_PRESENT) ? 1 : 0;
+        ptbl[pte_index].rw      = (flags & PTE_RW)      ? 1 : 0;
+        ptbl[pte_index].user    = (flags & PTE_USER)    ? 1 : 0;
+        ptbl[pte_index].pwt     = (flags & PTE_PWT)     ? 1 : 0;
+        ptbl[pte_index].pcd     = (flags & PTE_PCD)     ? 1 : 0;
+        ptbl[pte_index].global  = (flags & PTE_GLOBAL)  ? 1 : 0;
+        ptbl[pte_index].paddr   = ((u32)pa) >> 12;
 
-        memset((void*)pt_pa, 0, PAGE_SIZE);
+        tlb_invlpg((u32)va);
     }
 
-    pte* ptbl = ptbl_of_pde(&pdes[pde_index]);
-    ptbl[pte_index].raw         = 0;
-    ptbl[pte_index].present     = (flags & PTE_PRESENT) ? 1 : 0;
-    ptbl[pte_index].rw          = (flags & PTE_RW)      ? 1 : 0;
-    ptbl[pte_index].user        = (flags & PTE_USER)    ? 1 : 0;
-    ptbl[pte_index].paddr       = ((u32)pa) >> 12;
-
-    tlb_invlpg((u32)va);
     spinlock_unlock_irqrestore(&page_lock, eflags);
 
-    return 0;
+    if (err)
+        log_err("%s: cannot map 0x%x (error %d)\n", __func__, (u32)va, err);
+
+    return err;
 }
 
 void page_unmap_4kb(u32 page_tbl, void* va)
@@ -313,51 +327,56 @@ void page_unmap_4kb(u32 page_tbl, void* va)
     pde* pdes = (pde*)page_tbl;
     size_t pde_index = PD_INDEX(va);
     size_t pte_index = PT_INDEX(va);
-
-    if (pde_index >= 1024 || pte_index >= 1024) {
-        log_err("page_unmap_4kb: virtual address out of range");
-        return;
-    }
+    pte* ptbl = 0;
 
     if (!pdes) {
-        log_err("page_map_4kb: invalid page_tbl");
+        log_err("%s: invalid page table directory\n", __func__);
         return;
     }
 
     u32 eflags = spinlock_lock_irqsave(&page_lock);
+
     if (!pdes[pde_index].present || pdes[pde_index].page_size) {
         spinlock_unlock_irqrestore(&page_lock, eflags);
         return;
     }
 
-    pte* ptbl = ptbl_of_pde(&pdes[pde_index]);
+    ptbl = ptbl_of_pde(&pdes[pde_index]);
     if (!ptbl[pte_index].present) {
-        spinlock_unlock_irqrestore(&page_lock, eflags);
-        return;
-    }
-
-    if ((u32)va < USER_HEAP_BASE) {
-        log_err("page_unmap_4kb: kernel-band VA 0x%x kept as supervisor identity", (u32)va);
-        ptbl[pte_index].raw = ((u32)va & PAGE_MASK) | PTE_PRESENT | PTE_RW;
-        tlb_invlpg((u32)va);
         spinlock_unlock_irqrestore(&page_lock, eflags);
         return;
     }
 
     ptbl[pte_index].raw = 0;
     tlb_invlpg((u32)va);
+
+    /* Give the table back once its last entry is gone. */
+    int empty = 1;
+    for (size_t i = 0; i < 1024; i++) {
+        if (ptbl[i].present) {
+            empty = 0;
+            break;
+        }
+    }
+
+    if (empty) {
+        pdes[pde_index].raw = 0;
+        free(ptbl);
+        tlb_flush_all();
+    }
+
     spinlock_unlock_irqrestore(&page_lock, eflags);
 }
 
 void page_map_4mb_range(u32 page_tbl, u32 start_pa, u32 end_pa, u32 flags)
 {
     if (!page_tbl) {
-        log_err("page_map_4mb_range: invalid page_tbl");
+        log_err("%s: invalid page table directory\n", __func__);
         return;
     }
 
     if (!IS_4MB_ALIGN(start_pa) || !IS_4MB_ALIGN(end_pa)) {
-        log_err("page_map_4mb_range: addresses must be 4MB-aligned");
+        log_err("%s: addresses must be 4MB-aligned\n", __func__);
         return;
     }
 
@@ -369,34 +388,16 @@ void page_map_4mb_range(u32 page_tbl, u32 start_pa, u32 end_pa, u32 flags)
 void page_map_4kb_range(u32 page_tbl, u32 start_pa, u32 end_pa, u32 flags)
 {
     if (!page_tbl) {
-        log_err("page_map_4kb_range: invalid page_tbl");
+        log_err("%s: invalid page table directory\n", __func__);
         return;
     }
 
     if (!IS_4KB_ALIGN(start_pa) || !IS_4KB_ALIGN(end_pa)) {
-        log_err("page_map_4kb_range: addresses must be 4KB-aligned");
+        log_err("%s: addresses must be 4KB-aligned\n", __func__);
         return;
     }
 
     for (u32 pa = start_pa; pa < end_pa; pa += PAGE_SIZE) {
         page_map_4kb(page_tbl, (void*)pa, (void*)pa, flags);
     }
-}
-
-void page_init(u32 total_memory, u32 reserved_end)
-{
-    (void)reserved_end;  /* currently unused — the paging pool sits below
-                          * the PMM bitmap, so pmm_init() keeps it reserved */
-
-    memset(page_table_4gb, 0, sizeof(page_table_4gb));
-    
-    page_map_4mb_range((u32)page_table_4gb, 0x0, 0x1000000, PTE_KERNEL);  /* identity map first 16MB */
-    for (u32 addr = 0x1000000; addr < total_memory; addr += 0x400000)
-        page_map_4mb((u32)page_table_4gb, (void*)addr, (void*)addr, PTE_KERNEL);
-
-    page_enable_size_extensions();
-    load_cr3((u32)page_table_4gb);
-    page_enable();
-
-    log("Paging: enabled (CR0.PG=1), CR3=0x%x", (u32)page_table_4gb);
 }
