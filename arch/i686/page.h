@@ -5,6 +5,18 @@
 
 #define PAGE_SIZE       (4096)
 #define PAGE_MASK       (0xFFFFF000)
+#define IS_4MB_ALIGN(x) (((u32)(x) & (0x400000 - 1)) == 0)
+#define IS_4KB_ALIGN(x) (((u32)(x) & (4096 - 1)) == 0)
+
+/*
+ * Address-space layout.  User mappings live in [USER_BASE_VA, KERNEL_BASE_VA);
+ * everything at or above KERNEL_BASE_VA belongs to the kernel.  page_clone_table()
+ * uses the same boundary to decide which PDEs ring 3 may reach.
+ */
+#define USER_BASE_VA    (0x10000000)    /* 256 MiB */
+#define KERNEL_BASE_VA  (0xC0000000)    /* 3 GiB   */
+#define PAGE_ALIGN(x)   (((u32)(x) + PAGE_SIZE - 1) & PAGE_MASK)
+
 
 typedef struct page_table {
     u32 raw[1024];      // cover 4GB

@@ -30,9 +30,6 @@
 #define PAGE_OFFSET(vaddr)  ((u32)(vaddr) & 0xFFF)
 #define PAGE_ALIGN(x)       (((u32)(x) + PAGE_SIZE - 1) & PAGE_MASK)
 
-#define IS_4MB_ALIGN(x)     (((u32)(x) & (0x400000 - 1)) == 0)
-#define IS_4KB_ALIGN(x)     (((u32)(x) & (4096 - 1)) == 0)
-
 /* Page Directory Entry (PDE) */
 typedef union pde {
     u32 raw;
@@ -410,6 +407,7 @@ int page_clone_table(page_table* new, page_table* from, int user_accessible)
     pde* src_pdes = (pde*)from;
     u32 eflags = 0;
     int err = E_NOMEM;
+    int user = 0;
     u32 i = 0;
 
     if (!new || !from || new == from) {
@@ -420,10 +418,17 @@ int page_clone_table(page_table* new, page_table* from, int user_accessible)
     eflags = spinlock_lock_irqsave(&page_lock);
 
     for (i = 0; i < 1024; i++) {
+        /*
+         * The identity map below USER_BASE_VA belongs to the kernel.  Keeping
+         * those PDEs supervisor stops ring 3 from reading physical memory
+         * through it, even though the pages are present in every space.
+         */
+        user = user_accessible && (((u32)i << 22) >= USER_BASE_VA);
+
         new_pdes[i].raw = src_pdes[i].raw;
 
         if (!src_pdes[i].present || src_pdes[i].page_size) {
-            new_pdes[i].user = user_accessible ? 1 : 0;
+            new_pdes[i].user = user ? 1 : 0;
             continue;                   /* nothing below this PDE to copy */
         }
 
@@ -443,7 +448,7 @@ int page_clone_table(page_table* new, page_table* from, int user_accessible)
 
         memcpy(new_ptbl, src_ptbl, PAGE_SIZE);
         new_pdes[i].paddr = (u32)new_ptbl >> 12;
-        new_pdes[i].user  = user_accessible ? 1 : 0;
+        new_pdes[i].user  = user ? 1 : 0;
     }
 
     spinlock_unlock_irqrestore(&page_lock, eflags);

@@ -97,6 +97,11 @@ static inline rbnode* rbtree_prev(rbtree* tree, rbnode* node)
     return (p == tree->nil) ? 0 : p;
 }
 
+static inline int rbtree_is_empty(rbtree* tree)
+{
+    return (tree->root == tree->nil);
+}
+
 /** Iterate @pos over every node in @tree in sorted order. */
 #define rbtree_for_each(pos, tree) \
     for (rbnode* (pos) = rbtree_first(tree); \
