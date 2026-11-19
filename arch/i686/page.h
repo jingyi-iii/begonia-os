@@ -15,6 +15,17 @@
  */
 #define USER_BASE_VA    (0x10000000)    /* 256 MiB */
 #define KERNEL_BASE_VA  (0xC0000000)    /* 3 GiB   */
+
+/*
+ * The kernel image is linked for a high window, so a kernel address is
+ * KERNEL_VMA + its physical address.  Page table entries keep physical
+ * addresses: va_to_pa()/pa_to_va() are the only bridge between the two.
+ * KERNEL_BASE_VA above stays the user/kernel boundary (and the future
+ * physical-direct-map base).
+ */
+#define KERNEL_VMA      (0xF0000000)
+#define va_to_pa(v)     ((u32)(v) - KERNEL_VMA)
+#define pa_to_va(pa)    ((void*)((u32)(pa) + KERNEL_VMA))
 #define PAGE_ALIGN(x)   (((u32)(x) + PAGE_SIZE - 1) & PAGE_MASK)
 
 
