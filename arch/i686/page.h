@@ -42,8 +42,11 @@ static inline void page_load_table(page_table* table)
     if (!table)
         return;
 
-    /* Writing CR3 flushes the TLB for all non-global entries */
-    __asm__ __volatile__("mov %0, %%cr3" : : "r"((u32)table) : "memory");
+    u32 pa = va_to_pa(table);
+
+    /* Writing CR3 flushes the TLB for all non-global entries.  CR3 holds a
+     * physical address, the pointer above is a kernel virtual one. */
+    __asm__ __volatile__("mov %0, %%cr3" : : "r"(pa) : "memory");
 }
 
 

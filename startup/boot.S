@@ -59,10 +59,11 @@ _start:
     movl    $0x00000083,        %eax           /* present | rw | 4MB page, pa = 0 */
     movl    %eax,               (%edi)
 
-    /* PDE[960..967]: 0xF0000000..0xF2000000 -> physical 0..32 MiB, which
-     * covers the whole image (the 16 MB heap in .bss puts kernel_end near
-     * 18 MiB).  Adding 0x400000 to the raw entry advances the page base,
-     * because the flags live in the low 12 bits. */
+    /* PDE[960..1023]: all 256 MiB of the high window, 0xF0000000..0x100000000,
+     * mapped to physical 0..256 MiB.  That covers the image (the 16 MB heap
+     * in .bss puts kernel_end near 18 MiB) and lets pa_to_va() reach any RAM
+     * this kernel runs on.  Adding 0x400000 to the raw entry advances the
+     * page base, because the flags live in the low 12 bits. */
     /*
      * TODO(paging): the U/S bit is set only so the existing ring-3 demo, which
      * runs out of the kernel image, keeps working now that paging is on.  Drop
@@ -75,7 +76,7 @@ _start:
     movl    %eax,               (%edi, %ecx)
     addl    $0x400000,          %eax
     addl    $4,                 %ecx
-    cmpl    $(968 * 4),         %ecx
+    cmpl    $(1024 * 4),         %ecx
     jb      1b
 
     /* Our own flat GDT, so the far jump below does not depend on whatever

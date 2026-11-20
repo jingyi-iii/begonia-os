@@ -4,6 +4,7 @@
 #include "spinlock.h"
 #include "heap.h"
 #include "bitmap.h"
+#include "page.h"        /* pa_to_va: physical -> kernel window */
 #include "errno.h"
 
 /* Three bytes of marker, compared over the whole magic[] field: a region
@@ -131,7 +132,9 @@ int pmm_alloc_blocks(pmm_region* region, u32 size, u8** out_pa)
                     bitmap_set(region->bitmap, j);
                 }
 
-                memset((void*)(region->pa_start + start_block * region->block_size),
+                /* pa_start is physical; pa_to_va reaches it through the
+                 * kernel high window (the first 256 MiB of RAM). */
+                memset(pa_to_va(region->pa_start + start_block * region->block_size),
                        0, alloc_blocks * region->block_size);
                 *out_pa = (u8*)(start_block * region->block_size + region->pa_start);
                 spinlock_unlock_irqrestore(&pmm_lock, eflags);

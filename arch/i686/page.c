@@ -70,7 +70,8 @@ static DECLARE_SPINLOCK(page_lock);
 
 static inline pte* ptbl_of_pde(pde* p)
 {
-    return (pte*)(p->paddr << 12);
+    /* paddr is physical; page tables live in the kernel high window */
+    return (pte*)pa_to_va(p->paddr << 12);
 }
 
 static inline void tlb_invlpg(u32 vaddr)
@@ -223,11 +224,7 @@ static int split_4mb_pde(pde* p, pte* ptbl, u32 user_accessible)
         new_pde.rw        = 1;      /* writable PTEs take effect */
         new_pde.page_size = 0;      /* 4KB page table */
         new_pde.dirty     = 0;      /* bit 6 is only meaningful for a 4MB page */
-        /*
-         * Identity-mapped kernel: the pointer is also the physical address.
-         * The VMM has to translate this once it owns the address space.
-         */
-        new_pde.paddr     = (u32)ptbl >> 12;
+        new_pde.paddr     = va_to_pa(ptbl) >> 12;
         p->raw            = new_pde.raw;
     }
 
@@ -279,7 +276,7 @@ int page_map_4kb(page_table* page_tbl, void* va, void* pa, u32 flags)
             pdes[pde_index].user    = (flags & PTE_USER) ? 1 : 0;
             pdes[pde_index].pwt     = (flags & PTE_PWT)  ? 1 : 0;
             pdes[pde_index].pcd     = (flags & PTE_PCD)  ? 1 : 0;
-            pdes[pde_index].paddr   = (u32)ptbl >> 12;
+            pdes[pde_index].paddr   = va_to_pa(ptbl) >> 12;
         }
     } else if ((flags & PTE_USER) && !pdes[pde_index].user) {
         /* a supervisor PDE would hide the user page from ring 3 */
@@ -424,7 +421,6 @@ int page_clone_table(page_table* new, page_table* from, int user_accessible)
          * through it, even though the pages are present in every space.
          */
         user = user_accessible && (((u32)i << 22) >= USER_BASE_VA);
-
         new_pdes[i].raw = src_pdes[i].raw;
 
         if (!src_pdes[i].present || src_pdes[i].page_size) {
@@ -447,7 +443,7 @@ int page_clone_table(page_table* new, page_table* from, int user_accessible)
         }
 
         memcpy(new_ptbl, src_ptbl, PAGE_SIZE);
-        new_pdes[i].paddr = (u32)new_ptbl >> 12;
+        new_pdes[i].paddr = va_to_pa(new_ptbl) >> 12;
         new_pdes[i].user  = user ? 1 : 0;
     }
 
