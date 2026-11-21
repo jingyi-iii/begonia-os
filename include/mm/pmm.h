@@ -27,9 +27,9 @@ pmm_region* pmm_reserve     (u32 paddr, u32 total_size, u32 block_size);
 int         pmm_release     (pmm_region* region);
 
 // allocate a physical memory range of the given size from the PMM
-int         pmm_alloc_blocks(pmm_region* region, u32 size, u8** out_pa);
+int         pmm_alloc_blocks(pmm_region* region, u32 size, u32* out_pa);
 
 // free a previously allocated physical memory range back to the PMM
-int         pmm_free_blocks (pmm_region* region, u8* pa, u32 size);
+int         pmm_free_blocks (pmm_region* region, u32 pa, u32 size);
 
 #endif /* PMM_H */

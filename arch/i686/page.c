@@ -5,30 +5,9 @@
 #include "heap.h"
 #include "errno.h"
 
-#define PAGE_SIZE           (4096)
-#define PAGE_MASK           (0xFFFFF000)
-
-/* Page flags */
-#define PTE_PRESENT         (1 << 0)
-#define PTE_RW              (1 << 1)
-#define PTE_USER            (1 << 2)
-#define PTE_PWT             (1 << 3)
-#define PTE_PCD             (1 << 4)
-#define PTE_ACCESSED        (1 << 5)
-#define PTE_DIRTY           (1 << 6)
-#define PTE_GLOBAL          (1 << 8)
-
-/* Common combinations */
-#define PTE_KERNEL          (PTE_PRESENT | PTE_RW)              /* supervisor r/w */
-#define PTE_KERNEL_RO       (PTE_PRESENT)                       /* supervisor r/o */
-#define PTE_USER_PAGE       (PTE_PRESENT | PTE_RW | PTE_USER)   /* user r/w */
-#define PTE_USER_RO         (PTE_PRESENT | PTE_USER)            /* user r/o */
-
 /* Address decomposition */
 #define PD_INDEX(vaddr)     (((u32)(vaddr) >> 22) & 0x3FF)
 #define PT_INDEX(vaddr)     (((u32)(vaddr) >> 12) & 0x3FF)
-#define PAGE_OFFSET(vaddr)  ((u32)(vaddr) & 0xFFF)
-#define PAGE_ALIGN(x)       (((u32)(x) + PAGE_SIZE - 1) & PAGE_MASK)
 
 /* Page Directory Entry (PDE) */
 typedef union pde {
@@ -74,16 +53,11 @@ static inline pte* ptbl_of_pde(pde* p)
     return (pte*)pa_to_va(p->paddr << 12);
 }
 
-static inline void tlb_invlpg(u32 vaddr)
+static inline void tlb_flush_page(u32 vaddr)
 {
     __asm__ __volatile__("invlpg (%0)" : : "r"(vaddr) : "memory");
 }
 
-/*
- * Full TLB flush by reloading CR3.  Needed after a page table is freed:
- * invlpg only drops the entries of one address, while the paging-structure
- * caches may still hold the (now freed) table for the whole 4MB region.
- */
 static inline void tlb_flush_all(void)
 {
     __asm__ __volatile__(
@@ -120,48 +94,51 @@ static inline void page_enable(void)
     );
 }
 
-void page_map_4mb(page_table* page_tbl, void* va, void* pa, u32 flags)
+int page_map_4mb(page_table* pt, u32 va, u32 pa, u32 flags)
 {
-    pde* pdes = (pde*)page_tbl;
+    pde* pdes = (pde*)pt;
     size_t pde_index = PD_INDEX(va);
 
     if (!pdes) {
         log_err("%s: invalid page table directory\n", __func__);
-        return;
+        return E_INVAL;
     }
 
     if (!IS_4MB_ALIGN(va) || !IS_4MB_ALIGN(pa)) {
         log_err("%s: addresses must be 4MB-aligned\n", __func__);
-        return;
+        return E_INVAL;
     }
 
     u32 eflags = spinlock_lock_irqsave(&page_lock);
+    if (pdes[pde_index].present) {
+        log_err("%s: page table exists, need to unmap it before remapping\n", __func__);
+        spinlock_unlock_irqrestore(&page_lock, eflags);
+        return E_EXISTS;
+    }
 
-    /* free() takes the heap lock, which never takes page_lock: no inversion */
-    if (pdes[pde_index].present && !pdes[pde_index].page_size)
-        free(ptbl_of_pde(&pdes[pde_index]));
-
-    pdes[pde_index].raw         = 0;
-    pdes[pde_index].page_size   = 1;    /* 4MB page */
-    pdes[pde_index].present     = (flags & PTE_PRESENT)  ? 1 : 0;
-    pdes[pde_index].rw          = (flags & PTE_RW)       ? 1 : 0;
-    pdes[pde_index].user        = (flags & PTE_USER)     ? 1 : 0;
-    pdes[pde_index].pwt         = (flags & PTE_PWT)      ? 1 : 0;
-    pdes[pde_index].pcd         = (flags & PTE_PCD)      ? 1 : 0;
-    pdes[pde_index].global      = (flags & PTE_GLOBAL)   ? 1 : 0;
-    pdes[pde_index].paddr       = ((u32)pa) >> 12;
-    tlb_invlpg((u32)va);
+    pdes[pde_index].raw       = 0;
+    pdes[pde_index].page_size = 1;    /* 4MB page */
+    pdes[pde_index].present   = (flags & PTE_PRESENT)  ? 1 : 0;
+    pdes[pde_index].rw        = (flags & PTE_RW)       ? 1 : 0;
+    pdes[pde_index].user      = (flags & PTE_USER)     ? 1 : 0;
+    pdes[pde_index].pwt       = (flags & PTE_PWT)      ? 1 : 0;
+    pdes[pde_index].pcd       = (flags & PTE_PCD)      ? 1 : 0;
+    pdes[pde_index].global    = (flags & PTE_GLOBAL)   ? 1 : 0;
+    pdes[pde_index].paddr     = ((u32)pa) >> 12;
+    tlb_flush_page((u32)va);
     spinlock_unlock_irqrestore(&page_lock, eflags);
+
+    return 0;
 }
 
-void page_unmap_4mb(page_table* page_tbl, void* va)
+int page_unmap_4mb(page_table* pt, u32 va)
 {
-    pde* pdes = (pde*)page_tbl;
+    pde* pdes = (pde*)pt;
     size_t pde_index = PD_INDEX(va);
 
     if (!pdes) {
         log_err("%s: invalid page table directory\n", __func__);
-        return;
+        return E_INVAL;
     }
 
     u32 eflags = spinlock_lock_irqsave(&page_lock);
@@ -173,8 +150,10 @@ void page_unmap_4mb(page_table* page_tbl, void* va)
     }
 
     pdes[pde_index].raw = 0;
-    tlb_invlpg((u32)va);
+    tlb_flush_page((u32)va);
     spinlock_unlock_irqrestore(&page_lock, eflags);
+
+    return 0;
 }
 
 /*
@@ -231,9 +210,9 @@ static int split_4mb_pde(pde* p, pte* ptbl, u32 user_accessible)
     return 0;
 }
 
-int page_map_4kb(page_table* page_tbl, void* va, void* pa, u32 flags)
+int page_map_4kb(page_table* pt, u32 va, u32 pa, u32 flags)
 {
-    pde* pdes = (pde*)page_tbl;
+    pde* pdes = (pde*)pt;
     size_t pde_index = PD_INDEX(va);
     size_t pte_index = PT_INDEX(va);
     int err = 0;
@@ -295,7 +274,7 @@ int page_map_4kb(page_table* page_tbl, void* va, void* pa, u32 flags)
         ptbl[pte_index].global  = (flags & PTE_GLOBAL)  ? 1 : 0;
         ptbl[pte_index].paddr   = ((u32)pa) >> 12;
 
-        tlb_invlpg((u32)va);
+        tlb_flush_page((u32)va);
     }
 
     spinlock_unlock_irqrestore(&page_lock, eflags);
@@ -306,33 +285,33 @@ int page_map_4kb(page_table* page_tbl, void* va, void* pa, u32 flags)
     return err;
 }
 
-void page_unmap_4kb(page_table* page_tbl, void* va)
+int page_unmap_4kb(page_table* pt, u32 va)
 {
-    pde* pdes = (pde*)page_tbl;
+    pde* pdes = (pde*)pt;
     size_t pde_index = PD_INDEX(va);
     size_t pte_index = PT_INDEX(va);
     pte* ptbl = 0;
 
     if (!pdes) {
         log_err("%s: invalid page table directory\n", __func__);
-        return;
+        return E_INVAL;
     }
 
     u32 eflags = spinlock_lock_irqsave(&page_lock);
 
     if (!pdes[pde_index].present || pdes[pde_index].page_size) {
         spinlock_unlock_irqrestore(&page_lock, eflags);
-        return;
+        return E_INVAL;
     }
 
     ptbl = ptbl_of_pde(&pdes[pde_index]);
     if (!ptbl[pte_index].present) {
         spinlock_unlock_irqrestore(&page_lock, eflags);
-        return;
+        return E_NOTFOUND;
     }
 
     ptbl[pte_index].raw = 0;
-    tlb_invlpg((u32)va);
+    tlb_flush_page((u32)va);
 
     /* Give the table back once its last entry is gone. */
     int empty = 1;
@@ -350,62 +329,84 @@ void page_unmap_4kb(page_table* page_tbl, void* va)
     }
 
     spinlock_unlock_irqrestore(&page_lock, eflags);
+
+    return 0;
 }
 
-void page_map_4mb_range(page_table* page_tbl, u32 start_pa, u32 end_pa, u32 flags)
+int page_map_4mb_range(page_table* pt, u32 start_va, u32 start_pa, u32 size, u32 flags)
 {
-    if (!page_tbl) {
+    int ret = 0;
+
+    if (!pt) {
         log_err("%s: invalid page table directory\n", __func__);
-        return;
+        return E_INVAL;
     }
 
-    if (!IS_4MB_ALIGN(start_pa) || !IS_4MB_ALIGN(end_pa)) {
-        log_err("%s: addresses must be 4MB-aligned\n", __func__);
-        return;
+    if (!IS_4MB_ALIGN(start_va) || !IS_4MB_ALIGN(start_pa) || !IS_4MB_ALIGN(size)) {
+        log_err("%s: address/size must be 4MB-aligned\n", __func__);
+        return E_INVAL;
     }
 
-    for (u32 pa = start_pa; pa < end_pa; pa += 0x400000) {
-        page_map_4mb(page_tbl, (void*)pa, (void*)pa, flags);
+    if (start_va > 0xffffffff - size) {
+        log_err("%s: va overflow\n", __func__);
+        return E_INVAL; 
     }
+
+    if (start_pa > 0xffffffff - size) {
+        log_err("%s: pa overflow\n", __func__);
+        return E_INVAL;
+    }
+
+    for (u32 i = 0; i < size; i += 0x400000) {
+        ret = page_map_4mb(pt, start_va + i, start_pa + i, flags);
+        if (ret)
+            return ret;
+    }
+
+    return ret;
 }
 
-void page_map_4kb_range(page_table* page_tbl, u32 start_pa, u32 end_pa, u32 flags)
+int page_map_4kb_range(page_table* pt, u32 start_va, u32 start_pa, u32 size, u32 flags)
 {
-    if (!page_tbl) {
+    int ret = 0;
+
+    if (!pt) {
         log_err("%s: invalid page table directory\n", __func__);
-        return;
+        return E_INVAL;
     }
 
-    if (!IS_4KB_ALIGN(start_pa) || !IS_4KB_ALIGN(end_pa)) {
+    if (!IS_4KB_ALIGN(start_va) || !IS_4KB_ALIGN(start_pa) || !IS_4KB_ALIGN(size)) {
         log_err("%s: addresses must be 4KB-aligned\n", __func__);
-        return;
+        return E_INVAL;
     }
 
-    for (u32 pa = start_pa; pa < end_pa; pa += PAGE_SIZE) {
-        page_map_4kb(page_tbl, (void*)pa, (void*)pa, flags);
+    if (start_va > 0xffffffff - size) {
+        log_err("%s: va overflow\n", __func__);
+        return E_INVAL;
     }
+
+    if (start_pa > 0xffffffff - size) {
+        log_err("%s: pa overflow\n", __func__);
+        return E_INVAL;
+    }
+
+    for (u32 i = 0; i < size; i += PAGE_SIZE) {
+        ret = page_map_4kb(pt, start_va + i, start_pa + i, flags);
+        if (ret)
+            return ret;
+    }
+
+    return ret;
 }
 
-/*
- * Deep-clone a page directory: every present second-level page table is
- * copied into a fresh 4KB-aligned table, so the caller and the source can
- * remap entries independently.  The leaf pages and any 4MB PDE are shared
- * (this is a table copy, not copy-on-write).
- *
- * user_accessible forces the U/S bit on every copied PDE; leaf permissions
- * still come from the PTEs (or from the 4MB page itself).
- *
- * On failure the directory is cleared and every table allocated so far is
- * freed, so the caller only has to free the directory itself.
- */
-int page_clone_table(page_table* new, page_table* from, int user_accessible)
+int page_clone_table(page_table* new, page_table* from)
 {
     pde* new_pdes = (pde*)new;
     pde* src_pdes = (pde*)from;
     u32 eflags = 0;
     int err = E_NOMEM;
-    int user = 0;
     u32 i = 0;
+    u32 first_krn_index = PD_INDEX(KERNEL_VMA);
 
     if (!new || !from || new == from) {
         log_err("%s: invalid page tables\n", __func__);
@@ -415,18 +416,11 @@ int page_clone_table(page_table* new, page_table* from, int user_accessible)
     eflags = spinlock_lock_irqsave(&page_lock);
 
     for (i = 0; i < 1024; i++) {
-        /*
-         * The identity map below USER_BASE_VA belongs to the kernel.  Keeping
-         * those PDEs supervisor stops ring 3 from reading physical memory
-         * through it, even though the pages are present in every space.
-         */
-        user = user_accessible && (((u32)i << 22) >= USER_BASE_VA);
         new_pdes[i].raw = src_pdes[i].raw;
+        new_pdes[i].user = (i < first_krn_index) ? 1 : 0;
 
-        if (!src_pdes[i].present || src_pdes[i].page_size) {
-            new_pdes[i].user = user ? 1 : 0;
-            continue;                   /* nothing below this PDE to copy */
-        }
+        if (!src_pdes[i].present || src_pdes[i].page_size)
+            continue;
 
         pte* src_ptbl = ptbl_of_pde(&src_pdes[i]);
         if (!src_ptbl) {
@@ -444,7 +438,6 @@ int page_clone_table(page_table* new, page_table* from, int user_accessible)
 
         memcpy(new_ptbl, src_ptbl, PAGE_SIZE);
         new_pdes[i].paddr = va_to_pa(new_ptbl) >> 12;
-        new_pdes[i].user  = user ? 1 : 0;
     }
 
     spinlock_unlock_irqrestore(&page_lock, eflags);
@@ -461,28 +454,28 @@ rollback:
     return err;
 }
 
-/*
- * Free the second-level page tables of a cloned directory.  4MB entries are
- * skipped: they are shared with the source directory, never allocated here.
- * The directory itself belongs to the caller.
- */
-int page_destroy_table(page_table* page_tbl)
+int page_destroy_table(page_table* pt)
 {
-    pde* pdes = (pde*)page_tbl;
+    pde* pdes = (pde*)pt;
 
-    if (!page_tbl) {
+    if (!pt) {
         log_err("%s: invalid page table\n", __func__);
         return E_INVAL;
     }
 
+    u32 eflags = spinlock_lock_irqsave(&page_lock);
     for (u32 i = 0; i < 1024; i++) {
         if (!pdes[i].present)
             continue;
 
-        if (pdes[i].page_size == 0)
-            free(ptbl_of_pde(&pdes[i]));
+        if (pdes[i].page_size == 0) {
+            pte* ptes = ptbl_of_pde(&pdes[i]);
+            free(ptes);
+        }
+
         pdes[i].raw = 0;
     }
+    spinlock_unlock_irqrestore(&page_lock, eflags);
 
     return 0;
 }

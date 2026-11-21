@@ -100,7 +100,7 @@ int pmm_release(pmm_region* target)
     return E_INVAL;
 }
 
-int pmm_alloc_blocks(pmm_region* region, u32 size, u8** out_pa)
+int pmm_alloc_blocks(pmm_region* region, u32 size, u32* out_pa)
 {
     u32 start_block = 0;
     u32 found_blocks = 0;
@@ -136,7 +136,7 @@ int pmm_alloc_blocks(pmm_region* region, u32 size, u8** out_pa)
                  * kernel high window (the first 256 MiB of RAM). */
                 memset(pa_to_va(region->pa_start + start_block * region->block_size),
                        0, alloc_blocks * region->block_size);
-                *out_pa = (u8*)(start_block * region->block_size + region->pa_start);
+                *out_pa = start_block * region->block_size + region->pa_start;
                 spinlock_unlock_irqrestore(&pmm_lock, eflags);
                 return 0;
             }
@@ -150,7 +150,7 @@ int pmm_alloc_blocks(pmm_region* region, u32 size, u8** out_pa)
     return E_NOMEM;
 }
 
-int pmm_free_blocks(pmm_region* region, u8* pa, u32 size)
+int pmm_free_blocks(pmm_region* region, u32 pa, u32 size)
 {
     if (!region || !pa || size == 0)
         return E_NOMEM_FREE;
@@ -161,9 +161,8 @@ int pmm_free_blocks(pmm_region* region, u8* pa, u32 size)
         return E_NODEV;
     }
 
-    u32 addr = (u32)pa;
-    u32 off  = addr - region->pa_start;
-    if (addr < region->pa_start || off >= region->pa_total_size ||
+    u32 off  = pa - region->pa_start;
+    if (pa < region->pa_start || off >= region->pa_total_size ||
         off % region->block_size) {
         spinlock_unlock_irqrestore(&pmm_lock, eflags);
         return E_NOMEM_FREE;

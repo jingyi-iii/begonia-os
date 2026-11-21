@@ -5,6 +5,9 @@
 #include "pic.h"
 #include "syscall.h"
 #include "mailbox.h"
+#include "mm/vmm.h"
+
+static page_table krn_pt __attribute__((aligned(PAGE_SIZE))) = {0};
 
 void first_task(void)
 {
@@ -31,6 +34,10 @@ void kmain(void)
 {
     com_print("kernel main running!\r\n");
     pit_init(100);
+
+    /* TODO: decouple user mode code to a single elf */
+    page_map_4mb_range(&krn_pt, 0xF0000000, 0, 0x8000000, PTE_USER_PAGE);
+    page_load_table(&krn_pt);
 
     process_env_init();
     mailbox_syscall_init();
