@@ -26,6 +26,6 @@ void  vmm_switch_to_space    (vmm_space* space);
 void* vmm_alloc_and_map_pages(vmm_space* space, u32 page_cnt, u32 flags);
 void* vmm_map_pages          (vmm_space* space, u32 pa, u32 page_cnt, u32 flags);
 void* vmm_map_pages_at       (vmm_space* space, u32 va, u32 pa, u32 page_cnt, u32 flags);
-void  vmm_unmap_pages        (vmm_space* space, u32 any_va_in_pages);
+int   vmm_unmap_pages        (vmm_space* space, u32 any_va_in_pages);
 
 #endif /* VMM_H */

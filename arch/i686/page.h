@@ -36,20 +36,21 @@ typedef struct page_table {
     u32 raw[1024];      // cover 4GB
 } page_table;
 
-/*
- * The CR3/paging switch helpers below have no caller yet: the VMM owns the
- * address space and will call them once it lands.
- */
 static inline void page_load_table(page_table* table)
 {
     if (!table)
         return;
 
     u32 pa = va_to_pa(table);
-
-    /* Writing CR3 flushes the TLB for all non-global entries.  CR3 holds a
-     * physical address, the pointer above is a kernel virtual one. */
     __asm__ __volatile__("mov %0, %%cr3" : : "r"(pa) : "memory");
+}
+
+static inline u32 page_get_table(void)
+{
+    u32 pa = 0;
+    __asm__ __volatile__("mov %%cr3, %0" : "=r"(pa) : : "memory");
+
+    return (u32)pa_to_va(pa);
 }
 
 int  page_map_4mb      (page_table* pt, u32 va, u32 pa, u32 flags);

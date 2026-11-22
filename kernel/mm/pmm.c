@@ -34,21 +34,24 @@ pmm_region* pmm_reserve(u32 paddr, u32 total_size, u32 block_size)
 
     if (!total_size || !block_size || (total_size % block_size) ||
         (total_size > 0xFFFFFFFF - paddr)) {
-        log_err("%s: invalid parameters\n", __func__);
+        log_err("%s: physical range(%p): invalid parameters (size 0x%x, block 0x%x)\n",
+                __func__, (void*)paddr, total_size, block_size);
         return 0;
     }
 
     nblocks = bitmap_block_count(total_size, block_size);
     bitmap = (u8*)malloc(bitmap_byte_count(nblocks));
     if (!bitmap) {
-        log_err("%s: failed to allocate memory for the bitmap\n", __func__);
+        log_err("%s: physical range(%p): no memory for the bitmap\n",
+                __func__, (void*)paddr);
         return 0;
     }
 
     pmm_region* region = (pmm_region*)malloc(sizeof(pmm_region));
     if (!region) {
         free(bitmap);
-        log_err("%s: failed to allocate memory for the region\n", __func__);
+        log_err("%s: physical range(%p): no memory for the region\n",
+                __func__, (void*)paddr);
         return 0;
     }
 
@@ -62,8 +65,8 @@ pmm_region* pmm_reserve(u32 paddr, u32 total_size, u32 block_size)
     list_add(&region->this_node, &regions);
     spinlock_unlock_irqrestore(&pmm_lock, eflags);
 
-    log("%s: reserved physical memory region at 0x%x, size %u bytes, block size %u bytes\n",
-        __func__, paddr, total_size, block_size);
+    log_success("%s: pmm region(%p): reserved pa(%p) size(0x%x) block(0x%x)\n",
+                __func__, (void*)region, (void*)paddr, total_size, block_size);
 
     return region;
 }
@@ -89,14 +92,15 @@ int pmm_release(pmm_region* target)
     spinlock_unlock_irqrestore(&pmm_lock, eflags);
 
     if (found) {
-        log("%s: released physical memory region at 0x%x\n",
-            __func__, region->pa_start);
+        log_success("%s: pmm region(%p): released pa(%p)\n",
+                    __func__, (void*)region, (void*)region->pa_start);
 
         free(region->bitmap);
         free(region);
         return 0;
     }
 
+    log_warn("%s: pmm region(%p): not found\n", __func__, (void*)target);
     return E_INVAL;
 }
 
@@ -115,6 +119,8 @@ int pmm_alloc_blocks(pmm_region* region, u32 size, u32* out_pa)
     eflags = spinlock_lock_irqsave(&pmm_lock);
     if (!region_is_live(region)) {
         spinlock_unlock_irqrestore(&pmm_lock, eflags);
+        log_err("%s: pmm region(%p): stale or released region\n",
+                __func__, (void*)region);
         return E_NODEV;
     }
 
@@ -146,7 +152,8 @@ int pmm_alloc_blocks(pmm_region* region, u32 size, u32* out_pa)
     }
 
     spinlock_unlock_irqrestore(&pmm_lock, eflags);
-    log_err("%s: out of memory for %u blocks\n", __func__, alloc_blocks);
+    log_err("%s: pmm region(%p): out of memory for %u blocks (size 0x%x)\n",
+            __func__, (void*)region, alloc_blocks, size);
     return E_NOMEM;
 }
 
@@ -158,6 +165,8 @@ int pmm_free_blocks(pmm_region* region, u32 pa, u32 size)
     u32 eflags = spinlock_lock_irqsave(&pmm_lock);
     if (!region_is_live(region)) {
         spinlock_unlock_irqrestore(&pmm_lock, eflags);
+        log_err("%s: pmm region(%p): stale or released region\n",
+                __func__, (void*)region);
         return E_NODEV;
     }
 
@@ -165,11 +174,14 @@ int pmm_free_blocks(pmm_region* region, u32 pa, u32 size)
     if (pa < region->pa_start || off >= region->pa_total_size ||
         off % region->block_size) {
         spinlock_unlock_irqrestore(&pmm_lock, eflags);
+        log_err("%s: pmm region(%p): free pa(%p) size(0x%x) outside region\n",
+                __func__, (void*)region, (void*)pa, size);
         return E_NOMEM_FREE;
     }
 
     u32 start_block_nr = off / region->block_size;
-    u32 free_blocks = bitmap_block_count(size, region->block_size);
+    u32 requested_blocks = bitmap_block_count(size, region->block_size);
+    u32 free_blocks = requested_blocks;
     u32 total_blocks = bitmap_block_count(region->pa_total_size, region->block_size);
 
     if (free_blocks > total_blocks - start_block_nr)
@@ -180,6 +192,11 @@ int pmm_free_blocks(pmm_region* region, u32 pa, u32 size)
             bitmap_clear(region->bitmap, i);
     }
     spinlock_unlock_irqrestore(&pmm_lock, eflags);
+
+    if (free_blocks < requested_blocks)
+        log_warn("%s: pmm region(%p): free pa(%p) size(0x%x): clamped to %u of %u blocks\n",
+                 __func__, (void*)region, (void*)pa, size,
+                 free_blocks, requested_blocks);
 
     return 0;
 }
