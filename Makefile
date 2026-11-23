@@ -34,7 +34,7 @@ OBJ     := $(BUILD)/boot.o $(BUILD)/cpu.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)
            $(BUILD)/task.o $(BUILD)/task_asm.o $(BUILD)/page.o \
            $(BUILD)/string.o $(BUILD)/spinlock.o $(BUILD)/heap.o \
            $(BUILD)/process.o $(BUILD)/irq.o $(BUILD)/syscall.o $(BUILD)/log.o $(BUILD)/rbtree.o $(BUILD)/semaphore.o $(BUILD)/mailbox.o \
-           $(BUILD)/pmm.o $(BUILD)/vmm.o $(BUILD)/kernel.o
+           $(BUILD)/pmm.o $(BUILD)/vmm.o $(BUILD)/elf.o $(BUILD)/kernel.o
 ELF     := $(BUILD)/boot.elf
 ISO     := $(BUILD)/boot.iso
 ISODIR  := $(BUILD)/iso
@@ -181,6 +181,12 @@ $(BUILD)/vmm.o: $(KERNEL_DIR)/mm/vmm.c $(INC_DIR)/mm/vmm.h \
                 $(INC_DIR)/rbtree.h $(INC_DIR)/spinlock.h \
                 $(INC_DIR)/heap.h $(INC_DIR)/errno.h \
                 $(INC_DIR)/typedefs.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# elf.c: the ELF32 loader (segment parsing plus page mapping).
+$(BUILD)/elf.o: $(LIB_DIR)/elf.c $(INC_DIR)/elf.h \
+                $(INC_DIR)/typedefs.h $(INC_DIR)/string.h \
+                $(INC_DIR)/errno.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # demo/: freestanding programs that link against the kernel objects to
