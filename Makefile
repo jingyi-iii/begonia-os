@@ -34,7 +34,7 @@ OBJ     := $(BUILD)/boot.o $(BUILD)/cpu.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)
            $(BUILD)/task.o $(BUILD)/task_asm.o $(BUILD)/page.o \
            $(BUILD)/string.o $(BUILD)/spinlock.o $(BUILD)/heap.o \
            $(BUILD)/process.o $(BUILD)/irq.o $(BUILD)/syscall.o $(BUILD)/log.o $(BUILD)/rbtree.o $(BUILD)/semaphore.o $(BUILD)/mailbox.o \
-           $(BUILD)/pmm.o $(BUILD)/vmm.o $(BUILD)/elf.o $(BUILD)/kernel.o
+           $(BUILD)/pmm.o $(BUILD)/vmm.o $(BUILD)/elf.o $(BUILD)/hello_blob.o $(BUILD)/kernel.o
 ELF     := $(BUILD)/boot.elf
 ISO     := $(BUILD)/boot.iso
 ISODIR  := $(BUILD)/iso
@@ -229,3 +229,18 @@ run-iso: $(ISO)
 
 clean:
 	rm -rf $(BUILD)
+
+# user/: freestanding programs loaded by the ELF loader, linked for the user
+# window instead of the kernel high half.
+USER_DIR  := user
+HELLO_ELF := $(BUILD)/hello.elf
+
+$(BUILD)/hello.o: $(USER_DIR)/hello.c $(INC_DIR)/typedefs.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(HELLO_ELF): $(BUILD)/hello.o $(USER_DIR)/hello.ld
+	$(LD) -m elf_i386 -T $(USER_DIR)/hello.ld -o $@ $<
+
+# Embed the built image in the kernel so no filesystem is needed yet.
+$(BUILD)/hello_blob.o: $(HELLO_ELF)
+	$(LD) -r -b binary -o $@ $<
