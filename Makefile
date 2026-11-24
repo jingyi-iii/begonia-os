@@ -28,20 +28,25 @@ CFLAGS  := -m32 -O2 -ffreestanding -fno-pic -fno-stack-protector -fno-builtin \
            -I$(INC_DIR) -I$(ARCH_DIR)/i686 -fno-asynchronous-unwind-tables \
            -Wno-unused-parameter \
            -Wall -Wextra
-BUILD   := build
+BUILD     := build
+
+# The user program: linked for the user window and shipped as a multiboot
+# module, so it is built together with the kernel.
+USER_DIR   := user
+HELLO_ELF  := $(BUILD)/hello.elf
 OBJ     := $(BUILD)/boot.o $(BUILD)/cpu.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)/pic.o \
            $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o \
            $(BUILD)/task.o $(BUILD)/task_asm.o $(BUILD)/page.o \
            $(BUILD)/string.o $(BUILD)/spinlock.o $(BUILD)/heap.o \
            $(BUILD)/process.o $(BUILD)/irq.o $(BUILD)/syscall.o $(BUILD)/log.o $(BUILD)/rbtree.o $(BUILD)/semaphore.o $(BUILD)/mailbox.o \
-           $(BUILD)/pmm.o $(BUILD)/vmm.o $(BUILD)/elf.o $(BUILD)/hello_blob.o $(BUILD)/kernel.o
+           $(BUILD)/pmm.o $(BUILD)/vmm.o $(BUILD)/elf.o $(BUILD)/multiboot.o $(BUILD)/kernel.o
 ELF     := $(BUILD)/boot.elf
 ISO     := $(BUILD)/boot.iso
 ISODIR  := $(BUILD)/iso
 
 .PHONY: all run iso run-iso clean demo run-demo
 
-all: $(ELF)
+all: $(ELF) $(HELLO_ELF)
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -216,14 +221,15 @@ run-demo: $(DEMO_ELF)
 # Fast path: qemu's built-in Multiboot loader.
 run: $(ELF)
 	@echo "Booting in qemu (exits automatically after the message)..."
-	$(QEMU) -kernel $(ELF) -nographic -device isa-debug-exit || true
+	$(QEMU) -kernel $(ELF) -initrd $(HELLO_ELF) -nographic -device isa-debug-exit || true
 
 # GRUB path: bootable ISO built with grub-mkrescue.
-$(ISO): $(ELF) | $(BUILD)
+$(ISO): $(ELF) $(HELLO_ELF) Makefile | $(BUILD)
 	rm -rf $(ISODIR)
 	mkdir -p $(ISODIR)/boot/grub
 	cp $(ELF) $(ISODIR)/boot/boot.elf
-	printf 'set timeout=0\nset default=0\n\nmenuentry "BegoniaOS" {\n    multiboot /boot/boot.elf\n    boot\n}\n' > $(ISODIR)/boot/grub/grub.cfg
+	cp $(HELLO_ELF) $(ISODIR)/boot/hello.elf
+	printf 'set timeout=0\nset default=0\n\nmenuentry "BegoniaOS" {\n    multiboot /boot/boot.elf\n    module /boot/hello.elf hello.elf\n    boot\n}\n' > $(ISODIR)/boot/grub/grub.cfg
 	$(GRUB_MKRESCUE) -o $@ $(ISODIR)
 
 iso: $(ISO)
@@ -235,17 +241,8 @@ run-iso: $(ISO)
 clean:
 	rm -rf $(BUILD)
 
-# user/: freestanding programs loaded by the ELF loader, linked for the user
-# window instead of the kernel high half.
-USER_DIR  := user
-HELLO_ELF := $(BUILD)/hello.elf
-
 $(BUILD)/hello.o: $(USER_DIR)/hello.c $(INC_DIR)/typedefs.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(HELLO_ELF): $(BUILD)/hello.o $(USER_DIR)/hello.ld
 	$(LD) -m elf_i386 -T $(USER_DIR)/hello.ld -o $@ $<
-
-# Embed the built image in the kernel so no filesystem is needed yet.
-$(BUILD)/hello_blob.o: $(HELLO_ELF)
-	$(LD) -r -b binary -o $@ $<

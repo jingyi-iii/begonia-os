@@ -47,7 +47,7 @@ int task_init(task_ctx* ctx, task_entry entry, task_priv priv)
     ctx->ldts[3] = 0x00cf9200 | (ctx->ring << 13);
 
     ctx->kstack_top = (u32)ctx->kstack + sizeof(ctx->kstack);
-    ctx->ustack_top = (u32)ctx->ustack + sizeof(ctx->ustack);
+    // ctx->ustack_top = (u32)ctx->ustack + sizeof(ctx->ustack);
 
     ctx->code_sel = 0x0 | 0x4 | ctx->ring;
     ctx->data_sel = 0x8 | 0x4 | ctx->ring;

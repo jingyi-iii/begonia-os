@@ -6,6 +6,7 @@
 #include "spinlock.h"
 #include "task.h"
 #include "typedefs.h"
+#include "mm/vmm.h"
 
 #define SYSCALL_CTRL_ID_PROC    (0)
 
@@ -85,5 +86,5 @@ void    proc_exit           (i32 pid);
 void    proc_block          (i32 pid);
 void    proc_unblock        (i32 pid);
 
-void    process_env_init    (void);
+void    process_env_init    (vmm_space* space);
 #endif

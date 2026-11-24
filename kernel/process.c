@@ -38,6 +38,7 @@ static DECLARE_HEAD_NODE(processes);
 static spinlock schedule_lock = SPINLOCK_INIT;
 static tcb* g_current_thread = 0;
 static irq* g_proc_timer_irq = 0;
+static vmm_space* g_vmm = 0;
 
 static inline int may_run_directly(void)
 {
@@ -243,6 +244,14 @@ i32 thread_create(task_priv priv, task_entry entry, void* param, pcb* parent)
         log_err("thread_create: failed to init thread context\n");
         free(thread);
         return ret;
+    }
+
+    if (priv == TASK_PRIV_USER && g_vmm) {
+        u32 stack = (u32)vmm_alloc_and_map_pages(g_vmm, 1, PTE_USER_PAGE);
+        if (stack)
+            thread->ctx.ustack_top = stack + PAGE_SIZE;
+        else
+            log_err("thread_create: failed to alloc user stack\n");
     }
 
     thread->ctx.entry = (u32)entry;
@@ -821,8 +830,10 @@ static int proc_syscall_exec(void* data)
     }
 }
 
-void process_env_init(void)
+void process_env_init(vmm_space* space)
 {
+    g_vmm = space;
+
     tss_init();
     irq_request(&g_proc_timer_irq, "proc_timer", 0, 0, proc_timer_handler, 0);
     if (g_proc_timer_irq)

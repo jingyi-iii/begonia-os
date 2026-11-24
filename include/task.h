@@ -65,7 +65,7 @@ typedef struct task_ctx {
     u32     ustack_top;
     u32     entry;
     u8      kstack[4096];
-    u8      ustack[4096];   // Fixed size currently. Refactor to use dynamic allocation later if needed.
+    u8*     ustack;
     u8      ring;
     u8      code_sel;
     u8      data_sel;
