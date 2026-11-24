@@ -189,6 +189,11 @@ $(BUILD)/elf.o: $(LIB_DIR)/elf.c $(INC_DIR)/elf.h \
                 $(INC_DIR)/errno.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# multiboot.c: parses the GRUB module list out of the multiboot info.
+$(BUILD)/multiboot.o: $(LIB_DIR)/multiboot.c $(INC_DIR)/multiboot.h \
+                      $(INC_DIR)/typedefs.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 # demo/: freestanding programs that link against the kernel objects to
 # exercise one subsystem.  They supply their own kmain, so kernel.o stays out.
 DEMO_ELF := $(BUILD)/demo.elf
