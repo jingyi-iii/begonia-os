@@ -211,8 +211,29 @@ static vmm_region* vmm_lookup_region(vmm_space* space, u32 va)
     return out;
 }
 
-int vmm_create_space(page_table* new_table, page_table* from_table,
-                     pmm_region* pmm, vmm_space* out)
+int vmm_create_space(page_table* table, pmm_region* pmm, vmm_space* out)
+{
+    vmm_space space = {0};
+
+    if (!out || !pmm)
+        return E_INVAL;
+    if ((u32)table < KERNEL_BASE_VA || !IS_4KB_ALIGN((u32)table))
+        return E_INVAL;
+
+    space.region_tree = rbtree_create();
+    if (!space.region_tree)
+        return E_NOMEM;
+
+    space.page_tbl = table;
+    space.pmm = pmm;
+    spinlock_init(&space.sp_lock);
+    *out = space;
+
+    return 0;
+}
+
+int vmm_clone_space(page_table* new_table, page_table* from_table,
+                    pmm_region* pmm, vmm_space* out)
 {
     int ret = 0;
     vmm_space space = {0};

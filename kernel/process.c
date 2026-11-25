@@ -5,6 +5,9 @@
 #include "cpu.h"
 #include "irq.h"
 #include "syscall.h"
+#include "elf.h"
+#include "range.h"
+#include "multiboot.h"
 
 typedef enum {
     THREAD_CTRL_CREATE = 0,
@@ -31,6 +34,7 @@ typedef struct {
     task_priv       priv;
     task_entry      entry;
     void*           param;
+    pcb*            thread_parent;
 } proc_thread_ctrl;
 
 static DECLARE_HEAD_NODE(threads);
@@ -219,6 +223,7 @@ i32 thread_create(task_priv priv, task_entry entry, void* param, pcb* parent)
         config.priv = (task_priv)priv;
         config.entry = entry;
         config.param = param;
+        config.thread_parent = parent;
 
         int ret = syscall(SYSCALL_CTRL_ID_PROC, &config, sizeof(config));
         if (ret < 0)
@@ -231,6 +236,11 @@ i32 thread_create(task_priv priv, task_entry entry, void* param, pcb* parent)
     int ret = 0;
     u32 eflags = 0;
     tcb* thread = 0;
+
+    if (!parent) {
+        log_err("thread_create: no parent process, return\n");
+        return E_PROC_NOTFOUND;
+    }
 
     thread = (tcb*)malloc(sizeof(tcb));
     if (!thread) {
@@ -265,8 +275,7 @@ i32 thread_create(task_priv priv, task_entry entry, void* param, pcb* parent)
     list_init(&thread->wait_node);
 
     eflags = spinlock_lock_irqsave(&schedule_lock);
-    if (parent)
-        list_add(&thread->this_child, &parent->children);
+    list_add(&thread->this_child, &parent->children);
     list_add(&thread->node, &threads);
     spinlock_unlock_irqrestore(&schedule_lock, eflags);
     return thread->tid;
@@ -621,6 +630,133 @@ i32 proc_create(proc_priv priv, task_entry entry, void* param)
     return proc->pid;
 }
 
+
+static int elf_load_space(vmm_space* vmm, const void* image, u32 image_size, u32* out_entry)
+{
+    elf_image img = {0};
+    void* dst[ELF_MAX_LOAD_SEGMENTS] = {0};
+    u32 va[ELF_MAX_LOAD_SEGMENTS] = {0};
+    u32 pa[ELF_MAX_LOAD_SEGMENTS] = {0};
+    u32 sz[ELF_MAX_LOAD_SEGMENTS] = {0};
+    u32 n = 0;
+    int ret;
+
+    if (!vmm || !vmm->pmm || !image || !out_entry)
+        return E_INVAL;
+
+    ret = elf_parse(image, image_size, &img);
+    if (ret)
+        return ret;
+
+    /* the entry point has to land in the user window as well */
+    if (!u32_range_within(img.entry, 1, USER_BASE_VA, KERNEL_BASE_VA))
+        return E_INVAL;
+
+    for (u32 i = 0; i < img.seg_count; i++) {
+        u32 page_base = img.seg[i].vaddr & ~(PAGE_SIZE - 1);
+        u32 offset    = img.seg[i].vaddr - page_base;
+        u32 size;
+
+        /* user mappings only, and the whole segment has to fit the window */
+        if (!u32_range_within(img.seg[i].vaddr, img.seg[i].memsz,
+                              USER_BASE_VA, KERNEL_BASE_VA)) {
+            ret = E_INVAL;
+            goto fail;
+        }
+
+        /* a segment may start mid-page and always needs room for its bss tail */
+        if (!u32_align_up(offset + img.seg[i].memsz, PAGE_SIZE, &size)) {
+            ret = E_INVAL;
+            goto fail;
+        }
+
+        if (pmm_alloc_blocks(vmm->pmm, size, &pa[n])) {
+            ret = E_NOMEM;
+            goto fail;
+        }
+
+        if (!vmm_map_pages_at(vmm, page_base, pa[n], size / PAGE_SIZE,
+                              PTE_USER_PAGE)) {
+            pmm_free_blocks(vmm->pmm, pa[n], size);
+            ret = E_NOMEM;
+            goto fail;
+        }
+
+        va[n]  = page_base;
+        sz[n]  = size;
+        dst[n] = (u8*)pa_to_va(pa[n]) + offset;     /* kernel-side alias */
+        n++;
+    }
+
+    ret = elf_load_into(image, image_size, &img, dst);
+    if (ret)
+        goto fail;
+
+    *out_entry = img.entry;
+    return 0;
+
+fail:
+    while (n > 0) {
+        n--;
+        vmm_unmap_pages(vmm, va[n]);
+        pmm_free_blocks(vmm->pmm, pa[n], sz[n]);
+    }
+
+    return ret;
+}
+
+i32 proc_load_from_elf(const char* name)
+{
+    int cnt = mboot_module_count();
+    u8* start_va = 0;
+    u8* end_va = 0;
+    u32 file_size = 0;
+    u32 align_size = 0;
+    u32 load_pa = 0;
+    u32 load_va = 0;
+    u32 entry = 0;
+    i32 pid = E_NOTFOUND;      /* nothing loaded unless a module matches */
+    int i = 0;
+
+    for (i = 0; i < cnt; i++) {
+        if (mboot_module_get(i, &start_va, &end_va) != 0)
+            continue;
+        if (!module_name_matches(mboot_module_name(i), name))
+            continue;
+
+        file_size = (u32)end_va - (u32)start_va;
+        if (!u32_align_up(file_size, PAGE_SIZE, &align_size))
+            continue;
+
+        if (!g_vmm || !g_vmm->pmm ||
+            pmm_alloc_blocks(g_vmm->pmm, align_size, &load_pa))
+            continue;
+
+        load_va = (u32)pa_to_va(load_pa);
+        memcpy((void*)load_va, start_va, file_size);
+        memset((void*)load_va + file_size, 0, align_size - file_size);
+
+        int ret = elf_load_space(g_vmm, (void*)load_va, align_size, &entry);
+        if (ret) {
+            pmm_free_blocks(g_vmm->pmm, load_pa, align_size);
+            log_err("%s: elf_load_space('%s') failed, return %d", __func__, name, ret);
+            return ret;
+        }
+
+        /* elf_load_space() copied the segments into their own pages, so the
+         * staging copy is spent now. */
+        pmm_free_blocks(g_vmm->pmm, load_pa, align_size);
+
+        pid = proc_create(PROC_PRIV_USER, (task_entry)(uptr)entry, 0);
+        if (pid < 0)
+            return pid;
+
+        break;
+    }
+
+    return pid;
+}
+
 void proc_exit(i32 pid)
 {
     if (!may_run_directly()) {
@@ -779,7 +915,8 @@ static int proc_syscall_exec(void* data)
 
     switch (cfg->cmd) {
         case THREAD_CTRL_CREATE: {
-            int tid = thread_create(cfg->priv, cfg->entry, cfg->param, 0);
+            int tid = thread_create(cfg->priv, cfg->entry,
+                                    cfg->param, cfg->thread_parent);
             if (tid < 0)
                 return tid;
 

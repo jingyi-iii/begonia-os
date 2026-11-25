@@ -18,6 +18,7 @@
 #include "multiboot.h"
 #include "page.h"
 #include "errno.h"
+#include "string.h"
 
 /* Multiboot v1 info field offsets (u32 words), per the spec. */
 #define MBI_FLAGS       0   /* bit 3 = modules present */
@@ -116,4 +117,23 @@ const char* mboot_module_name(int i)
         return 0;
 
     return (const char*)pa_to_va(str_pa);
+}
+
+int module_name_matches(const char* module, const char* name)
+{
+    u32 mlen = 0;
+    u32 nlen = 0;
+
+    if (!module || !name || !name[0])
+        return 0;
+
+    while (module[mlen])
+        mlen++;
+    while (name[nlen])
+        nlen++;
+
+    if (nlen > mlen)
+        return 0;
+
+    return strcmp(module + (mlen - nlen), name) == 0;
 }

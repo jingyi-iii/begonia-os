@@ -36,4 +36,6 @@ int mboot_module_get(int i, u8** start, u8** end);
  * virtual address (may be NULL or empty). */
 const char* mboot_module_name(int i);
 
+int module_name_matches(const char* module, const char* name);
+
 #endif

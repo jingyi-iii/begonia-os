@@ -82,6 +82,7 @@ void    thread_wake_by_tid  (wait_queue* wq, i32 tid);
 void    thread_wake_all     (wait_queue* wq);
 
 i32     proc_create         (proc_priv priv, task_entry entry, void* param);
+i32     proc_load_from_elf  (const char* name);
 void    proc_exit           (i32 pid);
 void    proc_block          (i32 pid);
 void    proc_unblock        (i32 pid);
