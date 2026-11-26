@@ -265,6 +265,11 @@ int vmm_clone_space(page_table* new_table, page_table* from_table,
     return 0;
 }
 
+/*
+ * The caller must ensure the page table is not the one loaded in CR3: reap a
+ * process only after its threads are gone (children empty) and after the
+ * scheduler switched away from it.
+ */
 void vmm_destroy_space(vmm_space* space)
 {
     if (!space || !space->page_tbl)
@@ -297,6 +302,7 @@ void vmm_destroy_space(vmm_space* space)
     }
 
     int ret = page_destroy_table(page_tbl);
+    free(space->page_tbl);
     space->page_tbl = 0;
     spinlock_unlock_irqrestore(&space->sp_lock, eflags);
 
@@ -374,7 +380,7 @@ void* vmm_alloc_and_map_pages(vmm_space* space, u32 page_cnt, u32 flags)
     return (void*)region->va_start;
 }
 
-void* vmm_map_pages(vmm_space* space, u32 pa, u32 page_cnt, u32 flags)
+void* vmm_map_pages(vmm_space* space, u32 pa, u32 page_cnt, u32 flags, int own_pa)
 {
     int ret = 0;
     u32 size = 0;
@@ -416,7 +422,7 @@ void* vmm_map_pages(vmm_space* space, u32 pa, u32 page_cnt, u32 flags)
         }
     }
 
-    region->own_pa = 0;
+    region->own_pa = own_pa;
     region->pa_start = pa;
     spinlock_unlock_irqrestore(&space->sp_lock, eflags);
 
@@ -424,7 +430,7 @@ void* vmm_map_pages(vmm_space* space, u32 pa, u32 page_cnt, u32 flags)
 }
 
 void* vmm_map_pages_at(vmm_space* space, u32 fixed_va,
-                       u32 pa, u32 page_cnt, u32 flags)
+                       u32 pa, u32 page_cnt, u32 flags, int own_pa)
 {
     int ret = 0;
     u32 size = 0;
@@ -467,7 +473,7 @@ void* vmm_map_pages_at(vmm_space* space, u32 fixed_va,
         }
     }
 
-    region->own_pa = 0;
+    region->own_pa = own_pa;
     region->pa_start = pa;
     spinlock_unlock_irqrestore(&space->sp_lock, eflags);
 

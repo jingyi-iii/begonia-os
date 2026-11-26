@@ -13,6 +13,7 @@
 #include "errno.h"
 #include "multiboot.h"
 #include "string.h"
+#include "heap.h"
 
 static page_table krn_pt __attribute__((aligned(PAGE_SIZE))) = {0};
 static vmm_space krn_vmm = {0};
@@ -62,9 +63,14 @@ void kmain(void)
         return;
     }
 
-    int ret = vmm_create_space(&krn_pt, pmm, &krn_vmm);
+    page_table* pt = malloc_aligned(sizeof(page_table), PAGE_SIZE);
+    if (!pt)
+        return;
+
+    int ret = vmm_clone_space(pt, &krn_pt, pmm, &krn_vmm);
     if (ret) {
-        log_err("kmain: vmm_create_space() failed, return %d\n", ret);
+        free(pt);
+        log_err("kmain: vmm_clone_space() failed, return %d\n", ret);
         return;
     }
 

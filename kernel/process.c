@@ -22,6 +22,7 @@ typedef enum {
     THREAD_CTRL_WAKE_BY_TID,
     THREAD_CTRL_WAKE_ALL,
     PROC_CTRL_CREATE,
+    PROC_CTRL_LOAD_FROM_ELF,
     PROC_CTRL_EXIT,
     PROC_CTRL_BLOCK,
     PROC_CTRL_UNBLOCK,
@@ -42,7 +43,9 @@ static DECLARE_HEAD_NODE(processes);
 static spinlock schedule_lock = SPINLOCK_INIT;
 static tcb* g_current_thread = 0;
 static irq* g_proc_timer_irq = 0;
-static vmm_space* g_vmm = 0;
+static i32 used_pid = 0;
+static i32 used_tid = 0;
+static vmm_space* g_krn_vmm = 0;
 
 static inline int may_run_directly(void)
 {
@@ -139,12 +142,24 @@ static inline void thread_release_zombies(void)
     list_for_each_safe(node, next, &threads) {
         tcb* thread = list_entry(node, tcb, node);
         if (thread->state == TS_ZOMBIE) {
+            pcb* parent = thread->parent;
+
             list_del(&thread->node);
             list_del(&thread->this_child);
             if (thread->waiting_on) {
                 list_del(&thread->wait_node);
                 thread->waiting_on = 0;
             }
+
+            /*
+             * A process lives as long as it has a thread: when the last one
+             * goes away, mark the pcb so proc_release_zombies() right after
+             * this call can free it together with its address space.
+             */
+            if (parent && parent->state != PS_ZOMBIE &&
+                list_empty(&parent->children))
+                parent->state = PS_ZOMBIE;
+
             memset(thread, 0, sizeof(tcb));
             free(thread);
         }
@@ -164,11 +179,12 @@ static inline void proc_release_zombies(void)
 
         if (list_empty(&proc->children)) {
             list_del(&proc->node);
+            vmm_destroy_space(&proc->vmm);
             free(proc);
         }
     }
 
-    spinlock_unlock_irqrestore(&schedule_lock, eflags); 
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
 }
 
 static int thread_switch(thread_state from_state, tcb* to)
@@ -188,6 +204,7 @@ static int thread_switch(thread_state from_state, tcb* to)
 
     spinlock_unlock_irqrestore(&schedule_lock, eflags);
 
+    page_load_table(to->parent->vmm.page_tbl);
     task_switch(g_task_ctx, &to->ctx);
     thread_release_zombies();
     proc_release_zombies();
@@ -232,40 +249,41 @@ i32 thread_create(task_priv priv, task_entry entry, void* param, pcb* parent)
         return config.tid;
     }
 
-    static i32 tid = 0;
     int ret = 0;
     u32 eflags = 0;
     tcb* thread = 0;
 
     if (!parent) {
-        log_err("thread_create: no parent process, return\n");
+        log_err("%s: no parent process, return\n", __func__);
         return E_PROC_NOTFOUND;
     }
 
     thread = (tcb*)malloc(sizeof(tcb));
     if (!thread) {
-        log_err("thread_create: failed to alloc memory for tcb\n");
+        log_err("%s: failed to alloc memory for tcb\n", __func__);
         return E_NOMEM;
     }
 
     memset(thread, 0, sizeof(tcb));
     ret = task_init(&thread->ctx, thread_entry, priv);
     if (ret) {
-        log_err("thread_create: failed to init thread context\n");
+        log_err("%s: failed to init thread context\n", __func__);
         free(thread);
         return ret;
     }
 
-    if (priv == TASK_PRIV_USER && g_vmm) {
-        u32 stack = (u32)vmm_alloc_and_map_pages(g_vmm, 1, PTE_USER_PAGE);
-        if (stack)
+    if (priv == TASK_PRIV_USER && parent) {
+        u32 stack = (u32)vmm_alloc_and_map_pages(&parent->vmm, 1, PTE_USER_PAGE);
+        if (stack) {
             thread->ctx.ustack_top = stack + PAGE_SIZE;
-        else
-            log_err("thread_create: failed to alloc user stack\n");
+        } else {
+            log_err("%s: failed to alloc user stack\n", __func__);
+            free(thread);
+            return E_NOMEM;
+        }
     }
 
     thread->ctx.entry = (u32)entry;
-    thread->tid = tid++;
     thread->priv = (thread_priv)priv;
     thread->parent = parent;
     thread->state = TS_READY;
@@ -275,9 +293,11 @@ i32 thread_create(task_priv priv, task_entry entry, void* param, pcb* parent)
     list_init(&thread->wait_node);
 
     eflags = spinlock_lock_irqsave(&schedule_lock);
+    thread->tid = used_tid++;
     list_add(&thread->this_child, &parent->children);
     list_add(&thread->node, &threads);
     spinlock_unlock_irqrestore(&schedule_lock, eflags);
+
     return thread->tid;
 }
 
@@ -298,12 +318,24 @@ void thread_exit(i32 tid)
 
     if (thread_get_current() != thread) {
         u32 eflags = spinlock_lock_irqsave(&schedule_lock);
+        pcb* parent = thread->parent;
+
         list_del(&thread->node);
         list_del(&thread->this_child);
         if (thread->waiting_on) {
             list_del(&thread->wait_node);
             thread->waiting_on = 0;
         }
+
+        /*
+            * A process lives as long as it has a thread: when the last one
+            * goes away, mark the pcb so proc_release_zombies() right after
+            * this call can free it together with its address space.
+            */
+        if (parent && parent->state != PS_ZOMBIE &&
+            list_empty(&parent->children))
+            parent->state = PS_ZOMBIE;
+
         spinlock_unlock_irqrestore(&schedule_lock, eflags);
         memset(thread, 0, sizeof(tcb));
         free(thread);
@@ -312,7 +344,7 @@ void thread_exit(i32 tid)
 
     tcb* next = thread_get_next_runnable(thread);
     if (!next) {
-        log_warn("thread_exit: last runnable thread, halting\n");
+        log_warn("%s: last runnable thread, halting\n", __func__);
         cpu_halt();
     }
 
@@ -350,10 +382,10 @@ void thread_block(i32 tid)
 
     tcb* thread = 0;
     u32 eflags = 0;
-    
+
     thread = thread_get_by_tid(tid);
     if (!thread || (thread->state == TS_PENDING || thread->state == TS_NULL)) {
-        log_warn("thread_block: no such thread or the thread is already blocked\n");
+        log_warn("%s: no such thread or the thread is already blocked\n", __func__);
         return;
     }
 
@@ -380,14 +412,14 @@ void thread_unblock(i32 tid)
 
     tcb* thread = 0;
     u32 eflags = 0;
-    
+
     thread = thread_get_by_tid(tid);
     eflags = spinlock_lock_irqsave(&schedule_lock);
     if (!thread || thread->state != TS_PENDING) {
         spinlock_unlock_irqrestore(&schedule_lock, eflags);
         return;
     }
-    
+
     thread->state = TS_READY;
     spinlock_unlock_irqrestore(&schedule_lock, eflags);
 }
@@ -598,46 +630,74 @@ i32 proc_create(proc_priv priv, task_entry entry, void* param)
         return syscall(SYSCALL_CTRL_ID_PROC, &config, sizeof(config));
     }
 
-    static i32 pid = 0;
     int ret = 0;
     pcb* proc = 0;
+    page_table* pt = 0;
     u32 eflags = 0;
+
+    if (!g_krn_vmm || !g_krn_vmm->page_tbl) {
+        log_err("%s: process environment not setup\n", __func__);
+        return E_FAULT;
+    }
 
     proc = (pcb*)malloc(sizeof(pcb));
     if (!proc) {
-        log_err("proc_create: failed to alloc memory for pcb\n");
+        log_err("%s: failed to alloc memory for pcb\n", __func__);
+        return E_NOMEM;
+    }
+
+    pt = (page_table*)malloc_aligned(sizeof(page_table), PAGE_SIZE);
+    if (!pt) {
+        log_err("%s: failed to alloc memory for page table\n", __func__);
+        free(proc);
         return E_NOMEM;
     }
 
     memset(proc, 0, sizeof(pcb));
-    proc->pid = pid++;
     proc->priv = priv;
     proc->state = PS_READY;
-    list_init(&proc->node);
-    list_init(&proc->children);
 
-    ret = thread_create((task_priv)priv, entry, param, proc);
-    if (ret < 0) {
-        log_err("proc_create: failed to create main thread for process\n");
+    memset(pt, 0, sizeof(page_table));
+    ret = vmm_clone_space(pt, g_krn_vmm->page_tbl, g_krn_vmm->pmm, &proc->vmm);
+    if (ret) {
+        log_err("%s: failed to create vmm for process, ret = %d\n", __func__, ret);
+        free(pt);
         free(proc);
         return ret;
     }
 
+    list_init(&proc->node);
+    list_init(&proc->children);
+
     eflags = spinlock_lock_irqsave(&schedule_lock);
+    proc->pid = used_pid++;
     list_add(&proc->node, &processes);
     spinlock_unlock_irqrestore(&schedule_lock, eflags);
+
+    ret = thread_create((task_priv)priv, entry, param, proc);
+    if (ret < 0) {
+        log_err("%s: failed to create main thread for process\n", __func__);
+
+        eflags = spinlock_lock_irqsave(&schedule_lock);
+        list_del(&proc->node);
+        spinlock_unlock_irqrestore(&schedule_lock, eflags);
+
+        if (proc && proc->vmm.page_tbl)
+            vmm_destroy_space(&proc->vmm);
+        free(proc);
+        return ret;
+    }
 
     return proc->pid;
 }
 
 
-static int elf_load_space(vmm_space* vmm, const void* image, u32 image_size, u32* out_entry)
+static int elf_load_image(vmm_space* vmm, const void* image, u32 image_size, u32* out_entry)
 {
     elf_image img = {0};
     void* dst[ELF_MAX_LOAD_SEGMENTS] = {0};
     u32 va[ELF_MAX_LOAD_SEGMENTS] = {0};
     u32 pa[ELF_MAX_LOAD_SEGMENTS] = {0};
-    u32 sz[ELF_MAX_LOAD_SEGMENTS] = {0};
     u32 n = 0;
     int ret;
 
@@ -676,14 +736,13 @@ static int elf_load_space(vmm_space* vmm, const void* image, u32 image_size, u32
         }
 
         if (!vmm_map_pages_at(vmm, page_base, pa[n], size / PAGE_SIZE,
-                              PTE_USER_PAGE)) {
+                              PTE_USER_PAGE, 1)) {
             pmm_free_blocks(vmm->pmm, pa[n], size);
             ret = E_NOMEM;
             goto fail;
         }
 
         va[n]  = page_base;
-        sz[n]  = size;
         dst[n] = (u8*)pa_to_va(pa[n]) + offset;     /* kernel-side alias */
         n++;
     }
@@ -699,7 +758,6 @@ fail:
     while (n > 0) {
         n--;
         vmm_unmap_pages(vmm, va[n]);
-        pmm_free_blocks(vmm->pmm, pa[n], sz[n]);
     }
 
     return ret;
@@ -707,6 +765,18 @@ fail:
 
 i32 proc_load_from_elf(const char* name)
 {
+    if (!may_run_directly()) {
+        proc_thread_ctrl config = {0};
+        config.cmd = PROC_CTRL_LOAD_FROM_ELF;
+        config.param = (void*)name;
+
+        return syscall(SYSCALL_CTRL_ID_PROC, &config, sizeof(config));
+    }
+
+    int ret = 0;
+    pcb* proc = 0;
+    page_table* pt = 0;
+    u32 eflags = 0;
     int cnt = mboot_module_count();
     u8* start_va = 0;
     u8* end_va = 0;
@@ -715,8 +785,35 @@ i32 proc_load_from_elf(const char* name)
     u32 load_pa = 0;
     u32 load_va = 0;
     u32 entry = 0;
-    i32 pid = E_NOTFOUND;      /* nothing loaded unless a module matches */
     int i = 0;
+
+    if (!g_krn_vmm || !g_krn_vmm->page_tbl) {
+        log_err("%s: process environment not setup\n", __func__);
+        return E_FAULT;
+    }
+
+    proc = (pcb*)malloc(sizeof(pcb));
+    if (!proc) {
+        log_err("%s: failed to alloc memory for pcb\n", __func__);
+        return E_NOMEM;
+    }
+
+    memset(proc, 0, sizeof(pcb));
+    proc->priv = PROC_PRIV_USER;
+    proc->state = PS_READY;
+
+
+    pt = (page_table*)malloc_aligned(sizeof(page_table), PAGE_SIZE);
+    if (!pt) {
+        log_err("%s: failed to alloc memory for page table\n", __func__);
+        free(proc);
+        return E_NOMEM;
+    }
+
+    memset(pt, 0, sizeof(page_table));
+
+    list_init(&proc->node);
+    list_init(&proc->children);
 
     for (i = 0; i < cnt; i++) {
         if (mboot_module_get(i, &start_va, &end_va) != 0)
@@ -728,33 +825,55 @@ i32 proc_load_from_elf(const char* name)
         if (!u32_align_up(file_size, PAGE_SIZE, &align_size))
             continue;
 
-        if (!g_vmm || !g_vmm->pmm ||
-            pmm_alloc_blocks(g_vmm->pmm, align_size, &load_pa))
-            continue;
+        if (pmm_alloc_blocks(g_krn_vmm->pmm, align_size, &load_pa)) {
+            ret = E_NOMEM;
+            goto failed;
+        }
 
         load_va = (u32)pa_to_va(load_pa);
         memcpy((void*)load_va, start_va, file_size);
         memset((void*)load_va + file_size, 0, align_size - file_size);
 
-        int ret = elf_load_space(g_vmm, (void*)load_va, align_size, &entry);
+        ret = vmm_clone_space(pt, g_krn_vmm->page_tbl, g_krn_vmm->pmm, &proc->vmm);
         if (ret) {
-            pmm_free_blocks(g_vmm->pmm, load_pa, align_size);
-            log_err("%s: elf_load_space('%s') failed, return %d", __func__, name, ret);
-            return ret;
+            pmm_free_blocks(g_krn_vmm->pmm, load_pa, align_size);
+            log_err("%s: failed to create vmm for process, ret = %d\n", __func__, ret);
+            goto failed;
         }
 
-        /* elf_load_space() copied the segments into their own pages, so the
-         * staging copy is spent now. */
-        pmm_free_blocks(g_vmm->pmm, load_pa, align_size);
+        ret = elf_load_image(&proc->vmm, (void*)load_va, align_size, &entry);
+        if (ret) {
+            pmm_free_blocks(g_krn_vmm->pmm, load_pa, align_size);
+            log_err("%s: elf_load_image('%s') failed, return %d", __func__, name, ret);
+            goto failed;
+        }
+        pmm_free_blocks(g_krn_vmm->pmm, load_pa, align_size);
 
-        pid = proc_create(PROC_PRIV_USER, (task_entry)(uptr)entry, 0);
-        if (pid < 0)
-            return pid;
+        eflags = spinlock_lock_irqsave(&schedule_lock);
+        proc->pid = used_pid++;
+        list_add(&proc->node, &processes);
+        spinlock_unlock_irqrestore(&schedule_lock, eflags);
 
-        break;
+        ret = thread_create(TASK_PRIV_USER, (task_entry)entry, 0, proc);
+        if (ret < 0) {
+            eflags = spinlock_lock_irqsave(&schedule_lock);
+            list_del(&proc->node);
+            spinlock_unlock_irqrestore(&schedule_lock, eflags);
+
+            log_err("%s: failed to create main thread for process\n", __func__);
+            goto failed;
+        }
+
+        return proc->pid;
     }
 
-    return pid;
+failed:
+    if (proc->vmm.page_tbl)
+        vmm_destroy_space(&proc->vmm);
+    else
+        free(pt);
+    free(proc);
+    return ret ? ret : E_NOTFOUND;
 }
 
 void proc_exit(i32 pid)
@@ -801,6 +920,7 @@ void proc_exit(i32 pid)
     // no children
     if (list_empty(&proc->children)) {
         list_del(&proc->node);
+        vmm_destroy_space(&proc->vmm);
         free(proc);
         spinlock_unlock_irqrestore(&schedule_lock, eflags);
         return;
@@ -831,13 +951,13 @@ void proc_block(i32 pid)
 
     proc = proc_get_by_pid(pid);
     if (!proc) {
-        log_warn("proc_block: no such process\n");
+        log_warn("%s: no such process\n", __func__);
         return;
     }
 
     eflags = spinlock_lock_irqsave(&schedule_lock);
     if (proc->state != PS_READY) {
-        log_warn("proc_block: the process is already blocked\n");
+        log_warn("%s: the process is already blocked\n", __func__);
         spinlock_unlock_irqrestore(&schedule_lock, eflags);
         return;
     }
@@ -872,13 +992,13 @@ void proc_unblock(i32 pid)
 
     proc = proc_get_by_pid(pid);
     if (!proc) {
-        log_warn("proc_unblock: no such process\n");
+        log_warn("%s: no such process\n", __func__);
         return;
     }
 
     eflags = spinlock_lock_irqsave(&schedule_lock);
     if (proc->state != PS_PENDING) {
-        log_warn("proc_unblock: the process is already unblocked\n");
+        log_warn("%s: the process is already unblocked\n", __func__);
         spinlock_unlock_irqrestore(&schedule_lock, eflags);
         return;
     }
@@ -903,7 +1023,7 @@ static void proc_timer_handler(void* context)
         return;
 
     timeslice = 0;
-    LOG("proc_timer_handler: timer interrupt, yield current thread\n");
+    LOG("%s: timer interrupt, yield current thread\n", __func__);
     thread_yield();
 }
 
@@ -952,6 +1072,8 @@ static int proc_syscall_exec(void* data)
             return 0;
         case PROC_CTRL_CREATE:
             return proc_create((proc_priv)cfg->priv, cfg->entry, cfg->param);
+        case PROC_CTRL_LOAD_FROM_ELF:
+            return proc_load_from_elf(cfg->param);
         case PROC_CTRL_EXIT:
             proc_exit(cfg->pid);
             return 0;
@@ -962,14 +1084,14 @@ static int proc_syscall_exec(void* data)
             proc_unblock(cfg->pid);
             return 0;
         default:
-            log_err("proc_syscall_exec: unknown command %d\n", cfg->cmd);
+            log_err("%s: unknown command %d\n", __func__, cfg->cmd);
             return E_INVAL;
     }
 }
 
-void process_env_init(vmm_space* space)
+void process_env_init(vmm_space* vmm)
 {
-    g_vmm = space;
+    g_krn_vmm = vmm;
 
     tss_init();
     irq_request(&g_proc_timer_irq, "proc_timer", 0, 0, proc_timer_handler, 0);

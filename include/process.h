@@ -40,6 +40,7 @@ typedef struct {
     proc_priv       priv;
     proc_state      state;
     void*           param;
+    vmm_space       vmm;
 
     list_node       node;
     list_node       children;
@@ -87,5 +88,5 @@ void    proc_exit           (i32 pid);
 void    proc_block          (i32 pid);
 void    proc_unblock        (i32 pid);
 
-void    process_env_init    (vmm_space* space);
+void    process_env_init    (vmm_space* vmm);
 #endif
