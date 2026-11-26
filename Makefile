@@ -219,7 +219,7 @@ run-demo: $(DEMO_ELF)
 	$(QEMU) -kernel $(DEMO_ELF) -nographic -device isa-debug-exit || true
 
 # Fast path: qemu's built-in Multiboot loader.
-run: $(ELF)
+run: $(ELF) $(HELLO_ELF)
 	@echo "Booting in qemu (exits automatically after the message)..."
 	$(QEMU) -kernel $(ELF) -initrd $(HELLO_ELF) -nographic -device isa-debug-exit || true
 
