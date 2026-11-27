@@ -38,7 +38,7 @@ OBJ     := $(BUILD)/boot.o $(BUILD)/cpu.o $(BUILD)/gdt.o $(BUILD)/com.o $(BUILD)
            $(BUILD)/interrupt.o $(BUILD)/interrupt_asm.o \
            $(BUILD)/task.o $(BUILD)/task_asm.o $(BUILD)/page.o \
            $(BUILD)/string.o $(BUILD)/spinlock.o $(BUILD)/heap.o \
-           $(BUILD)/process.o $(BUILD)/irq.o $(BUILD)/syscall.o $(BUILD)/log.o $(BUILD)/rbtree.o $(BUILD)/semaphore.o $(BUILD)/mailbox.o \
+           $(BUILD)/process.o $(BUILD)/shm.o $(BUILD)/irq.o $(BUILD)/syscall.o $(BUILD)/log.o $(BUILD)/rbtree.o $(BUILD)/semaphore.o $(BUILD)/mailbox.o \
            $(BUILD)/pmm.o $(BUILD)/vmm.o $(BUILD)/elf.o $(BUILD)/multiboot.o $(BUILD)/kernel.o
 ELF     := $(BUILD)/boot.elf
 ISO     := $(BUILD)/boot.iso
@@ -115,6 +115,13 @@ $(BUILD)/process.o: $(KERNEL_DIR)/process.c $(INC_DIR)/process.h \
                     $(INC_DIR)/spinlock.h $(INC_DIR)/string.h \
                     $(INC_DIR)/task.h $(INC_DIR)/typedefs.h \
                     $(INC_DIR)/errno.h | $(BUILD)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# shm.c: share the pages of one process with another.
+$(BUILD)/shm.o: $(KERNEL_DIR)/shm.c $(INC_DIR)/shm.h \
+                $(INC_DIR)/range.h $(INC_DIR)/process.h \
+                $(INC_DIR)/mm/vmm.h $(INC_DIR)/typedefs.h \
+                $(INC_DIR)/log.h | $(BUILD)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # irq.c: the irqline/irq registry on top of interrupt_mask()/unmask().

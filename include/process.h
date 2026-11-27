@@ -74,6 +74,8 @@ void    thread_exit         (i32 tid);
 void    thread_yield        (void);
 void    thread_block        (i32 tid);
 void    thread_unblock      (i32 tid);
+tcb*    thread_get_current  (void);
+tcb*    thread_get_by_tid   (i32 tid);
 
 i32     thread_prepare_wait (wait_queue* wq);
 i32     thread_wait         (void);
@@ -87,6 +89,7 @@ i32     proc_load_from_elf  (const char* name);
 void    proc_exit           (i32 pid);
 void    proc_block          (i32 pid);
 void    proc_unblock        (i32 pid);
+pcb*    proc_get_by_pid     (i32 pid);
 
 void    process_env_init    (vmm_space* vmm);
 #endif

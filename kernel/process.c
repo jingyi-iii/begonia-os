@@ -52,29 +52,13 @@ static inline int may_run_directly(void)
     return is_user_mode() == 0;
 }
 
-static inline tcb* thread_get_by_tid(i32 tid)
-{
-    u32 eflags = spinlock_lock_irqsave(&schedule_lock);
-
-    list_for_each(node, &threads) {
-        tcb* thread = list_entry(node, tcb, node);
-        if (thread && thread->tid == tid) {
-            spinlock_unlock_irqrestore(&schedule_lock, eflags);
-            return thread;
-        }
-    }
-    spinlock_unlock_irqrestore(&schedule_lock, eflags);
-
-    return 0;
-}
-
 static inline void thread_set_current(tcb* thread)
 {
     if (thread)
         g_current_thread = thread;
 }
 
-static inline tcb* thread_get_current(void)
+tcb* thread_get_current(void)
 {
     return g_current_thread;
 }
@@ -119,7 +103,7 @@ static tcb* thread_get_next_runnable(tcb* current)
     return found;
 }
 
-static inline pcb* proc_get_by_pid(i32 pid)
+pcb* proc_get_by_pid(i32 pid)
 {
     u32 eflags = spinlock_lock_irqsave(&schedule_lock);
 
@@ -616,6 +600,22 @@ void thread_wake_all(wait_queue* wq)
             thread->state = TS_READY;
     }
     spinlock_unlock_irqrestore(&schedule_lock, eflags);
+}
+
+tcb* thread_get_by_tid(i32 tid)
+{
+    u32 eflags = spinlock_lock_irqsave(&schedule_lock);
+
+    list_for_each(node, &threads) {
+        tcb* thread = list_entry(node, tcb, node);
+        if (thread && thread->tid == tid) {
+            spinlock_unlock_irqrestore(&schedule_lock, eflags);
+            return thread;
+        }
+    }
+    spinlock_unlock_irqrestore(&schedule_lock, eflags);
+
+    return 0;
 }
 
 i32 proc_create(proc_priv priv, task_entry entry, void* param)
