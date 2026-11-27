@@ -6,15 +6,6 @@
 #include "string.h"
 #include "range.h"
 
-typedef struct vmm_region {
-    rbnode      node;
-    u32         va_start;
-    u32         size;
-    u32         flags;
-    u32         pa_start;
-    int         own_pa;
-} vmm_region;
-
 static int vmm_region_node_cmp(const rbnode* left, const rbnode* right)
 {
     if (!left || !right)
@@ -547,4 +538,29 @@ int vmm_unmap_pages(vmm_space* space, u32 any_va_in_pages)
                 __func__, (void*)space->page_tbl, ret);
 
     return ret;
+}
+
+int vmm_va_to_pa(vmm_space* space, u32 va, u32* out_pa, u32* out_size)
+{
+    vmm_region* region = 0;
+
+    if (!space || !space->region_tree)
+        return E_INVAL;
+    if (!out_pa || !out_size)
+        return E_INVAL;
+
+    u32 eflags = spinlock_lock_irqsave(&space->sp_lock);
+
+    region = vmm_lookup_region(space, va);
+    if (!region) {
+        spinlock_unlock_irqrestore(&space->sp_lock, eflags);
+        return E_INVAL;
+    }
+
+    *out_pa = region->pa_start + (va - region->va_start);
+    *out_size = region->size + (va - region->va_start);
+    
+    spinlock_unlock_irqrestore(&space->sp_lock, eflags);
+
+    return 0;
 }

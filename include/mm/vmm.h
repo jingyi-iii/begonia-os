@@ -11,6 +11,15 @@
 #define VMM_PTR_ERR(ptr)    ((int)(iptr)(ptr))
 #define VMM_IS_ERR(ptr)     ((uptr)(ptr) >= (uptr) - 4095)
 
+typedef struct vmm_region {
+    rbnode      node;
+    u32         va_start;
+    u32         size;
+    u32         flags;
+    u32         pa_start;
+    int         own_pa;
+} vmm_region;
+
 typedef struct vmm_space {
     rbtree*     region_tree;
     page_table* page_tbl;
@@ -30,5 +39,6 @@ void* vmm_map_pages          (vmm_space* space, u32 pa, u32 page_cnt,
 void* vmm_map_pages_at       (vmm_space* space, u32 va, u32 pa, u32 page_cnt,
                               u32 flags, int own_pa);
 int   vmm_unmap_pages        (vmm_space* space, u32 any_va_in_pages);
+int   vmm_va_to_pa           (vmm_space* space, u32 va, u32* out_pa, u32* out_size);
 
 #endif /* VMM_H */
