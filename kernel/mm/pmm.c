@@ -242,6 +242,65 @@ int pmm_alloc_blocks(pmm_space* space, u32 size, u32* out_pa)
     return E_NOMEM;
 }
 
+int pmm_ref_blocks(pmm_space* space, u32 pa, u32 size)
+{
+    if (!space || size == 0)
+        return E_INVAL;
+
+    u32 eflags = spinlock_lock_irqsave(&pmm_lock);
+    if (!space_is_live(space)) {
+        spinlock_unlock_irqrestore(&pmm_lock, eflags);
+        log_err("%s: pmm space(%p): stale or released space\n",
+                __func__, (void*)space);
+        return E_NODEV;
+    }
+
+    u32 off  = pa - space->pa_start;
+    if (pa < space->pa_start || off >= space->pa_total_size ||
+        off % space->block_size) {
+        spinlock_unlock_irqrestore(&pmm_lock, eflags);
+        log_err("%s: pmm space(%p): ref pa(%p) size(0x%x) outside space\n",
+                __func__, (void*)space, (void*)pa, size);
+        return E_INVAL;
+    }
+
+    u32 start_block_nr = off / space->block_size;
+    u32 ref_blocks = bitmap_block_count(size, space->block_size);
+    u32 total_blocks = bitmap_block_count(space->pa_total_size, space->block_size);
+
+    if (ref_blocks > total_blocks - start_block_nr) {
+        spinlock_unlock_irqrestore(&pmm_lock, eflags);
+        log_err("%s: pmm space(%p): ref pa(%p) size(0x%x) out of range\n",
+                __func__, (void*)space, (void*)pa, size);
+        return E_INVAL;
+    }
+
+    /* pass 1: validate the whole range before touching any counter */
+    for (u32 i = start_block_nr; i < start_block_nr + ref_blocks; i++) {
+        if (space->refsmap[i] == 0) {
+            spinlock_unlock_irqrestore(&pmm_lock, eflags);
+            log_err("%s: pmm space(%p): block %u ref but not allocated\n",
+                    __func__, (void*)space, i);
+            return E_NOMEM_FREE;
+        }
+
+        if (space->refsmap[i] == 0xFF) {
+            spinlock_unlock_irqrestore(&pmm_lock, eflags);
+            log_err("%s: pmm space(%p): block %u refcount overflow\n",
+                    __func__, (void*)space, i);
+            return E_LIMIT;
+        }
+    }
+
+    /* pass 2: take one more reference per block; the bitmap stays untouched */
+    for (u32 i = start_block_nr; i < start_block_nr + ref_blocks; i++)
+        space->refsmap[i]++;
+
+    spinlock_unlock_irqrestore(&pmm_lock, eflags);
+
+    return 0;
+}
+
 int pmm_free_blocks(pmm_space* space, u32 pa, u32 size)
 {
     if (!space || size == 0)
@@ -275,13 +334,18 @@ int pmm_free_blocks(pmm_space* space, u32 pa, u32 size)
         return E_INVAL;
     }
 
+    /* pass 1: validate the whole range, so a bad block leaves no partial state */
     for (u32 i = start_block_nr; i < start_block_nr + free_blocks; i++) {
         if (space->refsmap[i] == 0) {
+            spinlock_unlock_irqrestore(&pmm_lock, eflags);
             log_err("%s: pmm space(%p): block %u freed but not allocated\n",
                     __func__, (void*)space, i);
-            break;
+            return E_NOMEM_FREE;
         }
+    }
 
+    /* pass 2: drop one reference per block */
+    for (u32 i = start_block_nr; i < start_block_nr + free_blocks; i++) {
         space->refsmap[i]--;
         if (space->refsmap[i] > 0)
             continue;

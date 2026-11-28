@@ -27,10 +27,19 @@ int pmm_create_space (u32 paddr, u32 total_size, u32 block_size, pmm_space** out
 // release a previously reserved physical memory range
 int pmm_destroy_space(pmm_space* space);
 
+/*
+ * Reference counting: pmm_alloc_blocks() hands out one reference per block,
+ * pmm_ref_blocks() takes one more (the same pages mapped elsewhere) and
+ * pmm_free_blocks() drops one, freeing the block only when it reaches zero.
+ */
+
 // allocate a physical memory range of the given size from the PMM
 int pmm_alloc_blocks (pmm_space* space, u32 size, u32* out_pa);
 
-// free a previously allocated physical memory range back to the PMM
+// take one more reference on an already allocated physical range
+int pmm_ref_blocks   (pmm_space* space, u32 pa, u32 size);
+
+// drop one reference from a physical range and free blocks that reach zero
 int pmm_free_blocks  (pmm_space* space, u32 pa, u32 size);
 
 #endif /* PMM_H */
