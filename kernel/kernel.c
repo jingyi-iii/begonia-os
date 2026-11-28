@@ -57,9 +57,9 @@ void kmain(void)
     if (!page_map_4mb_range(&krn_pt, 0xF0000000, 0, 0x8000000, PTE_KERNEL_PAGE))
         page_load_table(&krn_pt);
 
-    pmm_region* pmm = pmm_reserve(0x03000000, 0x04000000, PAGE_SIZE);
+    pmm_space* pmm = pmm_reserve(0x03000000, 0x04000000, PAGE_SIZE);
     if (!pmm) {
-        log_err("kmain: failed to alloc pmm region\n");
+        log_err("kmain: failed to alloc pmm space\n");
         return;
     }
 

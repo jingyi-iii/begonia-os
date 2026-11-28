@@ -23,13 +23,13 @@ typedef struct vmm_region {
 typedef struct vmm_space {
     rbtree*     region_tree;
     page_table* page_tbl;
-    pmm_region* pmm;
+    pmm_space*  pmm;
     spinlock    sp_lock;
 } vmm_space;
 
-int   vmm_create_space       (page_table* table, pmm_region* pmm, vmm_space* out);
+int   vmm_create_space       (page_table* table, pmm_space* pmm, vmm_space* out);
 int   vmm_clone_space        (page_table* new_table, page_table* from_table,
-                              pmm_region* pmm, vmm_space* out);
+                              pmm_space* pmm, vmm_space* out);
 void  vmm_destroy_space      (vmm_space* space);
 void  vmm_switch_to_space    (vmm_space* space);
 

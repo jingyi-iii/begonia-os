@@ -7,26 +7,26 @@
 #include "page.h"        /* pa_to_va: physical -> kernel window */
 #include "errno.h"
 
-/* Three bytes of marker, compared over the whole magic[] field: a region
+/* Three bytes of marker, compared over the whole magic[] field: a space
  * pointer that was released or never reserved cannot pass this. */
-#define PMM_REGION_MAGIC "PMR"
+#define PMM_SPACE_MAGIC "PMS"
 
-static DECLARE_HEAD_NODE(regions);
+static DECLARE_HEAD_NODE(spaces);
 static DECLARE_SPINLOCK(pmm_lock);
 
-static inline int region_is_live(const pmm_region* region)
+static inline int space_is_live(const pmm_space* space)
 {
-    static const u8 tag[sizeof(region->magic)] = PMM_REGION_MAGIC;
+    static const u8 tag[sizeof(space->magic)] = PMM_SPACE_MAGIC;
 
-    for (u32 i = 0; i < sizeof(region->magic); i++) {
-        if (region->magic[i] != tag[i])
+    for (u32 i = 0; i < sizeof(space->magic); i++) {
+        if (space->magic[i] != tag[i])
             return 0;
     }
 
     return 1;
 }
 
-pmm_region* pmm_reserve(u32 paddr, u32 total_size, u32 block_size)
+pmm_space* pmm_reserve(u32 paddr, u32 total_size, u32 block_size)
 {
     u32 eflags = 0;
     u32 nblocks = 0;
@@ -47,44 +47,44 @@ pmm_region* pmm_reserve(u32 paddr, u32 total_size, u32 block_size)
         return 0;
     }
 
-    pmm_region* region = (pmm_region*)malloc(sizeof(pmm_region));
-    if (!region) {
+    pmm_space* space = (pmm_space*)malloc(sizeof(pmm_space));
+    if (!space) {
         free(bitmap);
-        log_err("%s: physical range(%p): no memory for the region\n",
+        log_err("%s: physical range(%p): no memory for the space\n",
                 __func__, (void*)paddr);
         return 0;
     }
 
-    region->pa_start = paddr;
-    region->pa_total_size = total_size;
-    region->bitmap = bitmap;
-    region->block_size = block_size;
-    memcpy(region->magic, PMM_REGION_MAGIC, sizeof(region->magic));
+    space->pa_start = paddr;
+    space->pa_total_size = total_size;
+    space->bitmap = bitmap;
+    space->block_size = block_size;
+    memcpy(space->magic, PMM_SPACE_MAGIC, sizeof(space->magic));
 
     eflags = spinlock_lock_irqsave(&pmm_lock);
-    list_add(&region->this_node, &regions);
+    list_add(&space->this_node, &spaces);
     spinlock_unlock_irqrestore(&pmm_lock, eflags);
 
-    log_success("%s: pmm region(%p): reserved pa(%p) size(0x%x) block(0x%x)\n",
-                __func__, (void*)region, (void*)paddr, total_size, block_size);
+    log_success("%s: pmm space(%p): reserved pa(%p) size(0x%x) block(0x%x)\n",
+                __func__, (void*)space, (void*)paddr, total_size, block_size);
 
-    return region;
+    return space;
 }
 
-int pmm_release(pmm_region* target)
+int pmm_release(pmm_space* target)
 {
     if (!target)
         return E_INVAL;
 
     u8 found = 0;
-    pmm_region* region = 0;
+    pmm_space* space = 0;
 
     u32 eflags = spinlock_lock_irqsave(&pmm_lock);
-    list_for_each_safe(node, n, &regions) {
-        region = list_entry(node, pmm_region, this_node);
-        if (region == target) {
+    list_for_each_safe(node, n, &spaces) {
+        space = list_entry(node, pmm_space, this_node);
+        if (space == target) {
             list_del(node);
-            memset(region->magic, 0, sizeof(region->magic));
+            memset(space->magic, 0, sizeof(space->magic));
             found = 1;
             break;
         }
@@ -92,19 +92,19 @@ int pmm_release(pmm_region* target)
     spinlock_unlock_irqrestore(&pmm_lock, eflags);
 
     if (found) {
-        log_success("%s: pmm region(%p): released pa(%p)\n",
-                    __func__, (void*)region, (void*)region->pa_start);
+        log_success("%s: pmm space(%p): released pa(%p)\n",
+                    __func__, (void*)space, (void*)space->pa_start);
 
-        free(region->bitmap);
-        free(region);
+        free(space->bitmap);
+        free(space);
         return 0;
     }
 
-    log_warn("%s: pmm region(%p): not found\n", __func__, (void*)target);
+    log_warn("%s: pmm space(%p): not found\n", __func__, (void*)target);
     return E_INVAL;
 }
 
-int pmm_alloc_blocks(pmm_region* region, u32 size, u32* out_pa)
+int pmm_alloc_blocks(pmm_space* space, u32 size, u32* out_pa)
 {
     u32 start_block = 0;
     u32 found_blocks = 0;
@@ -112,37 +112,37 @@ int pmm_alloc_blocks(pmm_region* region, u32 size, u32* out_pa)
     u32 total_blocks = 0;
     u32 eflags = 0;
 
-    if (!region || size == 0 || !out_pa)
+    if (!space || size == 0 || !out_pa)
         return E_INVAL;
     *out_pa = 0;
 
     eflags = spinlock_lock_irqsave(&pmm_lock);
-    if (!region_is_live(region)) {
+    if (!space_is_live(space)) {
         spinlock_unlock_irqrestore(&pmm_lock, eflags);
-        log_err("%s: pmm region(%p): stale or released region\n",
-                __func__, (void*)region);
+        log_err("%s: pmm space(%p): stale or released space\n",
+                __func__, (void*)space);
         return E_NODEV;
     }
 
-    alloc_blocks = bitmap_block_count(size, region->block_size);
-    total_blocks = bitmap_block_count(region->pa_total_size, region->block_size);
+    alloc_blocks = bitmap_block_count(size, space->block_size);
+    total_blocks = bitmap_block_count(space->pa_total_size, space->block_size);
 
     for (u32 i = 0; i < total_blocks; i++) {
-        if (!bitmap_test(region->bitmap, i)) {
+        if (!bitmap_test(space->bitmap, i)) {
             if (found_blocks == 0)
                 start_block = i;
 
             found_blocks++;
             if (found_blocks >= alloc_blocks) {
                 for (u32 j = start_block; j < start_block + alloc_blocks; j++) {
-                    bitmap_set(region->bitmap, j);
+                    bitmap_set(space->bitmap, j);
                 }
 
                 /* pa_start is physical; pa_to_va reaches it through the
                  * kernel high window (the first 256 MiB of RAM). */
-                memset(pa_to_va(region->pa_start + start_block * region->block_size),
-                       0, alloc_blocks * region->block_size);
-                *out_pa = start_block * region->block_size + region->pa_start;
+                memset(pa_to_va(space->pa_start + start_block * space->block_size),
+                       0, alloc_blocks * space->block_size);
+                *out_pa = start_block * space->block_size + space->pa_start;
                 spinlock_unlock_irqrestore(&pmm_lock, eflags);
                 return 0;
             }
@@ -152,50 +152,50 @@ int pmm_alloc_blocks(pmm_region* region, u32 size, u32* out_pa)
     }
 
     spinlock_unlock_irqrestore(&pmm_lock, eflags);
-    log_err("%s: pmm region(%p): out of memory for %u blocks (size 0x%x)\n",
-            __func__, (void*)region, alloc_blocks, size);
+    log_err("%s: pmm space(%p): out of memory for %u blocks (size 0x%x)\n",
+            __func__, (void*)space, alloc_blocks, size);
     return E_NOMEM;
 }
 
-int pmm_free_blocks(pmm_region* region, u32 pa, u32 size)
+int pmm_free_blocks(pmm_space* space, u32 pa, u32 size)
 {
-    if (!region || !pa || size == 0)
+    if (!space || !pa || size == 0)
         return E_NOMEM_FREE;
 
     u32 eflags = spinlock_lock_irqsave(&pmm_lock);
-    if (!region_is_live(region)) {
+    if (!space_is_live(space)) {
         spinlock_unlock_irqrestore(&pmm_lock, eflags);
-        log_err("%s: pmm region(%p): stale or released region\n",
-                __func__, (void*)region);
+        log_err("%s: pmm space(%p): stale or released space\n",
+                __func__, (void*)space);
         return E_NODEV;
     }
 
-    u32 off  = pa - region->pa_start;
-    if (pa < region->pa_start || off >= region->pa_total_size ||
-        off % region->block_size) {
+    u32 off  = pa - space->pa_start;
+    if (pa < space->pa_start || off >= space->pa_total_size ||
+        off % space->block_size) {
         spinlock_unlock_irqrestore(&pmm_lock, eflags);
-        log_err("%s: pmm region(%p): free pa(%p) size(0x%x) outside region\n",
-                __func__, (void*)region, (void*)pa, size);
+        log_err("%s: pmm space(%p): free pa(%p) size(0x%x) outside space\n",
+                __func__, (void*)space, (void*)pa, size);
         return E_NOMEM_FREE;
     }
 
-    u32 start_block_nr = off / region->block_size;
-    u32 requested_blocks = bitmap_block_count(size, region->block_size);
+    u32 start_block_nr = off / space->block_size;
+    u32 requested_blocks = bitmap_block_count(size, space->block_size);
     u32 free_blocks = requested_blocks;
-    u32 total_blocks = bitmap_block_count(region->pa_total_size, region->block_size);
+    u32 total_blocks = bitmap_block_count(space->pa_total_size, space->block_size);
 
     if (free_blocks > total_blocks - start_block_nr)
         free_blocks = total_blocks - start_block_nr;
 
     for (u32 i = start_block_nr; i < start_block_nr + free_blocks; i++) {
-        if (bitmap_test(region->bitmap, i))
-            bitmap_clear(region->bitmap, i);
+        if (bitmap_test(space->bitmap, i))
+            bitmap_clear(space->bitmap, i);
     }
     spinlock_unlock_irqrestore(&pmm_lock, eflags);
 
     if (free_blocks < requested_blocks)
-        log_warn("%s: pmm region(%p): free pa(%p) size(0x%x): clamped to %u of %u blocks\n",
-                 __func__, (void*)region, (void*)pa, size,
+        log_warn("%s: pmm space(%p): free pa(%p) size(0x%x): clamped to %u of %u blocks\n",
+                 __func__, (void*)space, (void*)pa, size,
                  free_blocks, requested_blocks);
 
     return 0;

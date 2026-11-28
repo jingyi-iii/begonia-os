@@ -202,7 +202,7 @@ static vmm_region* vmm_lookup_region(vmm_space* space, u32 va)
     return out;
 }
 
-int vmm_create_space(page_table* table, pmm_region* pmm, vmm_space* out)
+int vmm_create_space(page_table* table, pmm_space* pmm, vmm_space* out)
 {
     vmm_space space = {0};
 
@@ -224,7 +224,7 @@ int vmm_create_space(page_table* table, pmm_region* pmm, vmm_space* out)
 }
 
 int vmm_clone_space(page_table* new_table, page_table* from_table,
-                    pmm_region* pmm, vmm_space* out)
+                    pmm_space* pmm, vmm_space* out)
 {
     int ret = 0;
     vmm_space space = {0};
