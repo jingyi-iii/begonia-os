@@ -202,6 +202,58 @@ static vmm_region* vmm_lookup_region(vmm_space* space, u32 va)
     return out;
 }
 
+static int vmm_map_region(vmm_space* space, vmm_region* region, u32 pa)
+{
+    int ret = 0;
+    u32 i = 0;
+    u32 va_start = 0;
+
+    if (!space || !region || !pa || !IS_4KB_ALIGN(pa))
+        return E_INVAL;
+
+    for (i = 0; i < region->size / PAGE_SIZE; i++) {
+        ret = page_map_4kb(space->page_tbl, region->va_start + i * PAGE_SIZE,
+                           pa + i * PAGE_SIZE, region->page_flags);
+        if (ret) {
+            va_start = region->va_start;
+
+            /* roll back */
+            for (u32 j = 0; j < i; j++)
+                page_unmap_4kb(space->page_tbl, region->va_start + j * PAGE_SIZE);
+
+            log_warn("%s: page table(%p): map pa(%p) at va(%p): page %u failed, rolled back (err %d)\n",
+                     __func__, (void*)space->page_tbl, (void*)(u32)pa,
+                     (void*)(u32)va_start, i, ret);
+            return ret;
+        }
+    }
+
+    region->pa_start = pa;
+    return 0;
+}
+
+static int vmm_unmap_region(vmm_space* space, vmm_region* region)
+{
+    int ret = 0;
+
+    if (!space || !region)
+        return E_INVAL;
+
+    for (u32 i = 0; i < region->size / PAGE_SIZE; i++) {
+        u32 va = region->va_start + i * PAGE_SIZE;
+
+        ret = page_unmap_4kb(space->page_tbl, va);
+        if (ret && ret != E_NOTFOUND) {
+            log_err("%s: page table(%p): unmap va(%p) failed (err %d), region kept\n",
+                    __func__, (void*)space->page_tbl, (void*)(u32)va,
+                    ret);
+            return ret;
+        }
+    }
+
+    return 0;
+}
+
 int vmm_create_space(page_table* table, pmm_space* pmm, vmm_space* out)
 {
     vmm_space space = {0};
@@ -316,60 +368,6 @@ void vmm_switch_to_space(vmm_space* space)
     page_load_table(space->page_tbl);
 }
 
-void* vmm_alloc_and_map_pages(vmm_space* space, u32 page_cnt, u32 page_flags)
-{
-    u32 pa = 0;
-    int ret = 0;
-    u32 size = 0;
-    vmm_region* region = 0;
-
-    if (!space || !space->region_tree)
-        return 0;
-    if (page_cnt == 0 || !u32_pages_to_bytes(PAGE_SIZE, page_cnt, &size))
-        return 0;
-
-    ret = pmm_alloc_blocks(space->pmm, size, &pa);
-    if (ret) {
-        log_err("%s: page table(%p): map %u pages: no physical memory (err %d)\n",
-                __func__, (void*)space->page_tbl, page_cnt, ret);
-        return 0;
-    }
-
-    u32 eflags = spinlock_lock_irqsave(&space->sp_lock);
-    ret = vmm_alloc_region(space, size, page_flags, &region);
-    if (ret) {
-        pmm_free_blocks(space->pmm, pa, size);
-        spinlock_unlock_irqrestore(&space->sp_lock, eflags);
-        log_err("%s: page table(%p): map %u pages: no free VA (err %d)\n",
-                __func__, (void*)space->page_tbl, page_cnt, ret);
-        return 0;
-    }
-
-    for (u32 i = 0; i < region->size / PAGE_SIZE; i++) {
-        ret = page_map_4kb(space->page_tbl, region->va_start + i * PAGE_SIZE,
-                           pa + i * PAGE_SIZE, page_flags);
-        if (ret) {
-            u32 va_start = region->va_start;
-
-            /* roll back */
-            for (u32 j = 0; j < i; j++)
-                page_unmap_4kb(space->page_tbl, region->va_start + j * PAGE_SIZE);
-            vmm_release_region(space, region);
-            pmm_free_blocks(space->pmm, pa, size);
-            spinlock_unlock_irqrestore(&space->sp_lock, eflags);
-            log_warn("%s: page table(%p): map pa(%p) at va(%p): page %u failed, rolled back (err %d)\n",
-                     __func__, (void*)space->page_tbl, (void*)(u32)pa,
-                     (void*)(u32)va_start, i, ret);
-            return 0;
-        }
-    }
-
-    region->pa_start = pa;
-    spinlock_unlock_irqrestore(&space->sp_lock, eflags);
-
-    return (void*)region->va_start;
-}
-
 void* vmm_map_pages(vmm_space* space, u32 pa, u32 page_cnt, u32 page_flags)
 {
     int ret = 0;
@@ -394,26 +392,12 @@ void* vmm_map_pages(vmm_space* space, u32 pa, u32 page_cnt, u32 page_flags)
         return 0;
     }
 
-    for (u32 i = 0; i < region->size / PAGE_SIZE; i++) {
-        ret = page_map_4kb(space->page_tbl, region->va_start + i * PAGE_SIZE,
-                           pa + i * PAGE_SIZE, page_flags);
-        if (ret) {
-            u32 va_start = region->va_start;
-
-            /* roll back */
-            for (u32 j = 0; j < i; j++)
-                page_unmap_4kb(space->page_tbl, region->va_start + j * PAGE_SIZE);
-
-            vmm_release_region(space, region);
-            spinlock_unlock_irqrestore(&space->sp_lock, eflags);
-            log_warn("%s: page table(%p): map pa(%p) at va(%p): page %u failed, rolled back (err %d)\n",
-                     __func__, (void*)space->page_tbl, (void*)(u32)pa,
-                     (void*)(u32)va_start, i, ret);
-            return 0;
-        }
+    ret = vmm_map_region(space, region, pa);
+    if (ret) {
+        vmm_release_region(space, region);
+        spinlock_unlock_irqrestore(&space->sp_lock, eflags);
+        return 0;
     }
-
-    region->pa_start = pa;
     spinlock_unlock_irqrestore(&space->sp_lock, eflags);
 
     return (void*)region->va_start;
@@ -445,26 +429,12 @@ void* vmm_map_pages_at(vmm_space* space, u32 fixed_va,
         return 0;
     }
 
-    for (u32 i = 0; i < region->size / PAGE_SIZE; i++) {
-        ret = page_map_4kb(space->page_tbl, region->va_start + i * PAGE_SIZE,
-                           pa + i * PAGE_SIZE, page_flags);
-        if (ret) {
-            u32 va_start = region->va_start;
-
-            /* roll back */
-            for (u32 j = 0; j < i; j++)
-                page_unmap_4kb(space->page_tbl, region->va_start + j * PAGE_SIZE);
-
-            vmm_release_region(space, region);
-            spinlock_unlock_irqrestore(&space->sp_lock, eflags);
-            log_warn("%s: page table(%p): map pa(%p) at va(%p): page %u failed, rolled back (err %d)\n",
-                     __func__, (void*)space->page_tbl, (void*)(u32)pa,
-                     (void*)(u32)va_start, i, ret);
-            return 0;
-        }
+    ret = vmm_map_region(space, region, pa);
+    if (ret) {
+        vmm_release_region(space, region);
+        spinlock_unlock_irqrestore(&space->sp_lock, eflags);
+        return 0;
     }
-
-    region->pa_start = pa;
     spinlock_unlock_irqrestore(&space->sp_lock, eflags);
 
     return (void*)region->va_start;
@@ -487,43 +457,9 @@ int vmm_unmap_pages(vmm_space* space, u32 any_va_in_pages)
         return E_NOTFOUND;
     }
 
-    /*
-     * An address may already be absent (for example a retried unmap after a
-     * PMM failure), so E_NOTFOUND is tolerated.  Any other error means some
-     * of the region may still be mapped: keep the region and its physical
-     * pages so the caller can retry, instead of handing pages back to the
-     * PMM while page tables still point at them.
-     */
-    int unmap_error = 0;
-    u32 failed_va = 0;
-
-    for (u32 i = 0; i < region->size / PAGE_SIZE; i++) {
-        u32 va = region->va_start + i * PAGE_SIZE;
-
-        ret = page_unmap_4kb(space->page_tbl, va);
-        if (ret && ret != E_NOTFOUND) {
-            unmap_error = ret;
-            failed_va = va;
-            break;
-        }
-    }
-
-    if (unmap_error) {
-        spinlock_unlock_irqrestore(&space->sp_lock, eflags);
-        log_err("%s: page table(%p): unmap va(%p) failed (err %d), region kept\n",
-                __func__, (void*)space->page_tbl, (void*)(u32)failed_va,
-                unmap_error);
-        return unmap_error;
-    }
-
-    ret = pmm_free_blocks(space->pmm, region->pa_start, region->size);
+    ret = vmm_unmap_region(space, region);
     if (ret) {
-        u32 pa = region->pa_start;
-        u32 size = region->size;
-
         spinlock_unlock_irqrestore(&space->sp_lock, eflags);
-        log_err("%s: page table(%p): free pa(%p) size(0x%x) failed (err %d), region kept\n",
-                __func__, (void*)space->page_tbl, (void*)(u32)pa, size, ret);
         return ret;
     }
 
@@ -535,6 +471,73 @@ int vmm_unmap_pages(vmm_space* space, u32 any_va_in_pages)
                 __func__, (void*)space->page_tbl, ret);
 
     return ret;
+}
+
+void* vmm_alloc_and_map_pages(vmm_space* space, u32 page_cnt, u32 page_flags)
+{
+    u32 pa = 0;
+    int ret = 0;
+    u32 size = 0;
+    u32 va = 0;
+
+    if (!space || !space->region_tree)
+        return 0;
+    if (page_cnt == 0 || !u32_pages_to_bytes(PAGE_SIZE, page_cnt, &size))
+        return 0;
+
+    ret = pmm_alloc_blocks(space->pmm, size, &pa);
+    if (ret) {
+        log_err("%s: page table(%p): map %u pages: no physical memory (err %d)\n",
+                __func__, (void*)space->page_tbl, page_cnt, ret);
+        return 0;
+    }
+
+    va = (u32)vmm_map_pages(space, pa, page_cnt, page_flags);
+    if (!va) {
+        pmm_free_blocks(space->pmm, pa, size);
+        return 0;
+    }
+
+    return (void*)va;
+}
+
+int vmm_unmap_and_free_pages(vmm_space* space, u32 any_va_in_pages)
+{
+    vmm_region* region = 0;
+    int ret = 0;
+
+    if (!space || !space->region_tree)
+        return E_INVAL;
+
+    u32 eflags = spinlock_lock_irqsave(&space->sp_lock);
+    region = vmm_lookup_region(space, any_va_in_pages);
+    if (!region) {
+        spinlock_unlock_irqrestore(&space->sp_lock, eflags);
+        log_warn("%s: page table(%p): unmap va(%p): not found\n",
+                 __func__, (void*)space->page_tbl, (void*)(u32)any_va_in_pages);
+        return E_NOTFOUND;
+    }
+
+    ret = vmm_unmap_region(space, region);
+    if (ret) {
+        spinlock_unlock_irqrestore(&space->sp_lock, eflags);
+        return ret;
+    }
+
+    ret = pmm_free_blocks(space->pmm, region->pa_start, region->size);
+    if (ret) {
+        spinlock_unlock_irqrestore(&space->sp_lock, eflags);
+        return ret;
+    }
+
+    ret = vmm_release_region(space, region);
+    if (ret) {
+        spinlock_unlock_irqrestore(&space->sp_lock, eflags);
+        return ret;
+    }
+
+    spinlock_unlock_irqrestore(&space->sp_lock, eflags);
+    return 0;
 }
 
 void* vmm_map_pages_shared(vmm_space* space, u32 pa, u32 page_cnt, u32 page_flags)
@@ -554,15 +557,34 @@ void* vmm_map_pages_shared(vmm_space* space, u32 pa, u32 page_cnt, u32 page_flag
 
 int vmm_unmap_pages_shared(vmm_space* space, u32 any_va_in_pages)
 {
+    int ret = 0;
+
+    if (!space || !space->region_tree)
+        return E_INVAL;
+
     u32 eflags = spinlock_lock_irqsave(&space->sp_lock);
     vmm_region* region = vmm_lookup_region(space, any_va_in_pages);
     if (!region || !(region->region_flags & VMM_REGION_FLAGS_SHARED)){
         spinlock_unlock_irqrestore(&space->sp_lock, eflags);
         return E_INVAL;
     }
+
+    ret = vmm_unmap_region(space, region);
+    if (ret) {
+        spinlock_unlock_irqrestore(&space->sp_lock, eflags);
+        return ret;
+    }
+
+    ret = pmm_free_blocks(space->pmm, region->pa_start, region->size);
+    if (ret) {
+        spinlock_unlock_irqrestore(&space->sp_lock, eflags);
+        return ret;
+    }
+
+    ret = vmm_release_region(space, region);
     spinlock_unlock_irqrestore(&space->sp_lock, eflags);
 
-    return vmm_unmap_pages(space, any_va_in_pages);
+    return ret;
 }
 
 int vmm_va_to_pa(vmm_space* space, u32 va, u32* out_pa, u32* out_size)

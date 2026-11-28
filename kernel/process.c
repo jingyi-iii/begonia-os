@@ -698,6 +698,7 @@ static int elf_load_image(vmm_space* vmm, const void* image, u32 image_size, u32
     void* dst[ELF_MAX_LOAD_SEGMENTS] = {0};
     u32 va[ELF_MAX_LOAD_SEGMENTS] = {0};
     u32 pa[ELF_MAX_LOAD_SEGMENTS] = {0};
+    u32 sz[ELF_MAX_LOAD_SEGMENTS] = {0};
     u32 n = 0;
     int ret;
 
@@ -744,6 +745,7 @@ static int elf_load_image(vmm_space* vmm, const void* image, u32 image_size, u32
 
         va[n]  = page_base;
         dst[n] = (u8*)pa_to_va(pa[n]) + offset;     /* kernel-side alias */
+        sz[n] = size;
         n++;
     }
 
@@ -758,6 +760,7 @@ fail:
     while (n > 0) {
         n--;
         vmm_unmap_pages(vmm, va[n]);
+        pmm_free_blocks(vmm->pmm, pa[n], sz[n]);
     }
 
     return ret;
