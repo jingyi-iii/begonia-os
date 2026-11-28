@@ -558,7 +558,7 @@ int vmm_va_to_pa(vmm_space* space, u32 va, u32* out_pa, u32* out_size)
     }
 
     *out_pa = region->pa_start + (va - region->va_start);
-    *out_size = region->size + (va - region->va_start);
+    *out_size = region->size - (va - region->va_start);
     
     spinlock_unlock_irqrestore(&space->sp_lock, eflags);
 
