@@ -735,8 +735,8 @@ static int elf_load_image(vmm_space* vmm, const void* image, u32 image_size, u32
             goto fail;
         }
 
-        if (!vmm_map_pages_at(vmm, page_base, pa[n], size / PAGE_SIZE,
-                              PTE_USER_PAGE, 1)) {
+        if (!vmm_map_pages_at(vmm, page_base, pa[n],
+                              size / PAGE_SIZE, PTE_USER_PAGE)) {
             pmm_free_blocks(vmm->pmm, pa[n], size);
             ret = E_NOMEM;
             goto fail;

@@ -7,17 +7,15 @@
 #include "spinlock.h"
 #include "mm/pmm.h"
 
-#define VMM_ERR_PTR(err)    ((void*)(iptr)(err))
-#define VMM_PTR_ERR(ptr)    ((int)(iptr)(ptr))
-#define VMM_IS_ERR(ptr)     ((uptr)(ptr) >= (uptr) - 4095)
+#define VMM_REGION_FLAGS_SHARED (1 << 1)
 
 typedef struct vmm_region {
     rbnode      node;
     u32         va_start;
-    u32         size;
-    u32         flags;
     u32         pa_start;
-    int         own_pa;
+    u32         size;
+    u32         page_flags;
+    u32         region_flags;
 } vmm_region;
 
 typedef struct vmm_space {
@@ -33,12 +31,13 @@ int   vmm_clone_space        (page_table* new_table, page_table* from_table,
 void  vmm_destroy_space      (vmm_space* space);
 void  vmm_switch_to_space    (vmm_space* space);
 
-void* vmm_alloc_and_map_pages(vmm_space* space, u32 page_cnt, u32 flags);
-void* vmm_map_pages          (vmm_space* space, u32 pa, u32 page_cnt,
-                              u32 flags, int own_pa);
-void* vmm_map_pages_at       (vmm_space* space, u32 va, u32 pa, u32 page_cnt,
-                              u32 flags, int own_pa);
+void* vmm_alloc_and_map_pages(vmm_space* space, u32 page_cnt, u32 page_flags);
+void* vmm_map_pages          (vmm_space* space, u32 pa, u32 page_cnt, u32 page_flags);
+void* vmm_map_pages_at       (vmm_space* space, u32 va, u32 pa, u32 page_cnt, u32 page_flags);
 int   vmm_unmap_pages        (vmm_space* space, u32 any_va_in_pages);
 int   vmm_va_to_pa           (vmm_space* space, u32 va, u32* out_pa, u32* out_size);
 
-#endif /* VMM_H */
+void* vmm_map_pages_shared   (vmm_space* space, u32 pa, u32 page_cnt, u32 page_flags);
+int   vmm_unmap_pages_shared (vmm_space* space, u32 any_va_in_pages);
+
+#endif

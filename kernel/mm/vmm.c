@@ -108,7 +108,7 @@ static int vmm_get_available_va(vmm_space* space, u32 size, u32* out_va)
 }
 
 static int vmm_alloc_region(vmm_space* space, size_t size,
-                            u32 flags, vmm_region** out)
+                            u32 page_flags, vmm_region** out)
 {
 
     vmm_region* region = 0;
@@ -128,9 +128,9 @@ static int vmm_alloc_region(vmm_space* space, size_t size,
         return E_NOMEM;
 
     memset(region, 0, sizeof(vmm_region));
-    region->va_start = va;
-    region->size     = size;
-    region->flags    = flags;
+    region->va_start   = va;
+    region->size       = size;
+    region->page_flags = page_flags;
 
     if (!vmm_range_is_available(space, va, size)) {
         free(region);
@@ -144,7 +144,7 @@ static int vmm_alloc_region(vmm_space* space, size_t size,
 }
 
 static int vmm_alloc_region_at(vmm_space* space, u32 va, size_t size,
-                               u32 flags, vmm_region** out)
+                               u32 page_flags, vmm_region** out)
 {
 
     vmm_region* region = 0;
@@ -166,9 +166,9 @@ static int vmm_alloc_region_at(vmm_space* space, u32 va, size_t size,
         return E_NOMEM;
 
     memset(region, 0, sizeof(vmm_region));
-    region->va_start = va;
-    region->size     = size;
-    region->flags    = flags;
+    region->va_start   = va;
+    region->size       = size;
+    region->page_flags = page_flags;
 
     rbtree_insert(space->region_tree, &region->node, vmm_region_node_cmp);
     *out = region;
@@ -284,7 +284,7 @@ void vmm_destroy_space(vmm_space* space)
                     unmap_errors++;
             }
             rbtree_delete(space->region_tree, pos);
-            if (r->own_pa && pmm_free_blocks(space->pmm, r->pa_start, r->size))
+            if (pmm_free_blocks(space->pmm, r->pa_start, r->size))
                 pmm_errors++;
             free(r);
         }
@@ -316,7 +316,7 @@ void vmm_switch_to_space(vmm_space* space)
     page_load_table(space->page_tbl);
 }
 
-void* vmm_alloc_and_map_pages(vmm_space* space, u32 page_cnt, u32 flags)
+void* vmm_alloc_and_map_pages(vmm_space* space, u32 page_cnt, u32 page_flags)
 {
     u32 pa = 0;
     int ret = 0;
@@ -336,7 +336,7 @@ void* vmm_alloc_and_map_pages(vmm_space* space, u32 page_cnt, u32 flags)
     }
 
     u32 eflags = spinlock_lock_irqsave(&space->sp_lock);
-    ret = vmm_alloc_region(space, size, flags, &region);
+    ret = vmm_alloc_region(space, size, page_flags, &region);
     if (ret) {
         pmm_free_blocks(space->pmm, pa, size);
         spinlock_unlock_irqrestore(&space->sp_lock, eflags);
@@ -347,7 +347,7 @@ void* vmm_alloc_and_map_pages(vmm_space* space, u32 page_cnt, u32 flags)
 
     for (u32 i = 0; i < region->size / PAGE_SIZE; i++) {
         ret = page_map_4kb(space->page_tbl, region->va_start + i * PAGE_SIZE,
-                           pa + i * PAGE_SIZE, flags);
+                           pa + i * PAGE_SIZE, page_flags);
         if (ret) {
             u32 va_start = region->va_start;
 
@@ -364,14 +364,13 @@ void* vmm_alloc_and_map_pages(vmm_space* space, u32 page_cnt, u32 flags)
         }
     }
 
-    region->own_pa = 1;
     region->pa_start = pa;
     spinlock_unlock_irqrestore(&space->sp_lock, eflags);
 
     return (void*)region->va_start;
 }
 
-void* vmm_map_pages(vmm_space* space, u32 pa, u32 page_cnt, u32 flags, int own_pa)
+void* vmm_map_pages(vmm_space* space, u32 pa, u32 page_cnt, u32 page_flags)
 {
     int ret = 0;
     u32 size = 0;
@@ -387,7 +386,7 @@ void* vmm_map_pages(vmm_space* space, u32 pa, u32 page_cnt, u32 flags, int own_p
         return 0;
 
     u32 eflags = spinlock_lock_irqsave(&space->sp_lock);
-    ret = vmm_alloc_region(space, size, flags, &region);
+    ret = vmm_alloc_region(space, size, page_flags, &region);
     if (ret) {
         spinlock_unlock_irqrestore(&space->sp_lock, eflags);
         log_err("%s: page table(%p): map pa(%p) size(0x%x): no free VA (err %d)\n",
@@ -397,13 +396,14 @@ void* vmm_map_pages(vmm_space* space, u32 pa, u32 page_cnt, u32 flags, int own_p
 
     for (u32 i = 0; i < region->size / PAGE_SIZE; i++) {
         ret = page_map_4kb(space->page_tbl, region->va_start + i * PAGE_SIZE,
-                           pa + i * PAGE_SIZE, flags);
+                           pa + i * PAGE_SIZE, page_flags);
         if (ret) {
             u32 va_start = region->va_start;
 
             /* roll back */
             for (u32 j = 0; j < i; j++)
                 page_unmap_4kb(space->page_tbl, region->va_start + j * PAGE_SIZE);
+
             vmm_release_region(space, region);
             spinlock_unlock_irqrestore(&space->sp_lock, eflags);
             log_warn("%s: page table(%p): map pa(%p) at va(%p): page %u failed, rolled back (err %d)\n",
@@ -413,7 +413,6 @@ void* vmm_map_pages(vmm_space* space, u32 pa, u32 page_cnt, u32 flags, int own_p
         }
     }
 
-    region->own_pa = own_pa;
     region->pa_start = pa;
     spinlock_unlock_irqrestore(&space->sp_lock, eflags);
 
@@ -421,7 +420,7 @@ void* vmm_map_pages(vmm_space* space, u32 pa, u32 page_cnt, u32 flags, int own_p
 }
 
 void* vmm_map_pages_at(vmm_space* space, u32 fixed_va,
-                       u32 pa, u32 page_cnt, u32 flags, int own_pa)
+                       u32 pa, u32 page_cnt, u32 page_flags)
 {
     int ret = 0;
     u32 size = 0;
@@ -437,7 +436,7 @@ void* vmm_map_pages_at(vmm_space* space, u32 fixed_va,
         return 0;
 
     u32 eflags = spinlock_lock_irqsave(&space->sp_lock);
-    ret = vmm_alloc_region_at(space, fixed_va, size, flags, &region);
+    ret = vmm_alloc_region_at(space, fixed_va, size, page_flags, &region);
     if (ret) {
         spinlock_unlock_irqrestore(&space->sp_lock, eflags);
         log_err("%s: page table(%p): map pa(%p) at va(%p): no free VA (err %d)\n",
@@ -448,13 +447,14 @@ void* vmm_map_pages_at(vmm_space* space, u32 fixed_va,
 
     for (u32 i = 0; i < region->size / PAGE_SIZE; i++) {
         ret = page_map_4kb(space->page_tbl, region->va_start + i * PAGE_SIZE,
-                           pa + i * PAGE_SIZE, flags);
+                           pa + i * PAGE_SIZE, page_flags);
         if (ret) {
             u32 va_start = region->va_start;
 
             /* roll back */
             for (u32 j = 0; j < i; j++)
                 page_unmap_4kb(space->page_tbl, region->va_start + j * PAGE_SIZE);
+
             vmm_release_region(space, region);
             spinlock_unlock_irqrestore(&space->sp_lock, eflags);
             log_warn("%s: page table(%p): map pa(%p) at va(%p): page %u failed, rolled back (err %d)\n",
@@ -464,7 +464,6 @@ void* vmm_map_pages_at(vmm_space* space, u32 fixed_va,
         }
     }
 
-    region->own_pa = own_pa;
     region->pa_start = pa;
     spinlock_unlock_irqrestore(&space->sp_lock, eflags);
 
@@ -517,17 +516,15 @@ int vmm_unmap_pages(vmm_space* space, u32 any_va_in_pages)
         return unmap_error;
     }
 
-    if (region->own_pa) {
-        ret = pmm_free_blocks(space->pmm, region->pa_start, region->size);
-        if (ret) {
-            u32 pa = region->pa_start;
-            u32 size = region->size;
+    ret = pmm_free_blocks(space->pmm, region->pa_start, region->size);
+    if (ret) {
+        u32 pa = region->pa_start;
+        u32 size = region->size;
 
-            spinlock_unlock_irqrestore(&space->sp_lock, eflags);
-            log_err("%s: page table(%p): free pa(%p) size(0x%x) failed (err %d), region kept\n",
-                    __func__, (void*)space->page_tbl, (void*)(u32)pa, size, ret);
-            return ret;
-        }
+        spinlock_unlock_irqrestore(&space->sp_lock, eflags);
+        log_err("%s: page table(%p): free pa(%p) size(0x%x) failed (err %d), region kept\n",
+                __func__, (void*)space->page_tbl, (void*)(u32)pa, size, ret);
+        return ret;
     }
 
     ret = vmm_release_region(space, region);
@@ -538,6 +535,34 @@ int vmm_unmap_pages(vmm_space* space, u32 any_va_in_pages)
                 __func__, (void*)space->page_tbl, ret);
 
     return ret;
+}
+
+void* vmm_map_pages_shared(vmm_space* space, u32 pa, u32 page_cnt, u32 page_flags)
+{
+    u32 va = (u32)vmm_map_pages(space, pa, page_cnt, page_flags);
+    if (!va)
+        return 0;
+
+    u32 eflags = spinlock_lock_irqsave(&space->sp_lock);
+    vmm_region* region = vmm_lookup_region(space, va);
+    if (region)
+        region->region_flags |= VMM_REGION_FLAGS_SHARED;
+    spinlock_unlock_irqrestore(&space->sp_lock, eflags);
+
+    return (void*)va;
+}
+
+int vmm_unmap_pages_shared(vmm_space* space, u32 any_va_in_pages)
+{
+    u32 eflags = spinlock_lock_irqsave(&space->sp_lock);
+    vmm_region* region = vmm_lookup_region(space, any_va_in_pages);
+    if (!region || !(region->region_flags & VMM_REGION_FLAGS_SHARED)){
+        spinlock_unlock_irqrestore(&space->sp_lock, eflags);
+        return E_INVAL;
+    }
+    spinlock_unlock_irqrestore(&space->sp_lock, eflags);
+
+    return vmm_unmap_pages(space, any_va_in_pages);
 }
 
 int vmm_va_to_pa(vmm_space* space, u32 va, u32* out_pa, u32* out_size)
@@ -559,7 +584,7 @@ int vmm_va_to_pa(vmm_space* space, u32 va, u32* out_pa, u32* out_size)
 
     *out_pa = region->pa_start + (va - region->va_start);
     *out_size = region->size - (va - region->va_start);
-    
+
     spinlock_unlock_irqrestore(&space->sp_lock, eflags);
 
     return 0;
