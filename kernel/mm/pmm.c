@@ -4,6 +4,7 @@
 #include "spinlock.h"
 #include "heap.h"
 #include "bitmap.h"
+#include "range.h"
 #include "page.h"        /* pa_to_va: physical -> kernel window */
 #include "errno.h"
 
@@ -59,13 +60,13 @@ int pmm_create_space(u32 paddr, u32 total_size, u32 block_size, pmm_space** out)
     *out = 0;
 
     if (!total_size || !block_size || (total_size % block_size) ||
-        (paddr % block_size) || (total_size > 0xFFFFFFFF - paddr)) {
+        (paddr % block_size)) {
         log_err("%s: physical range(%p): invalid parameters (size 0x%x, block 0x%x)\n",
                 __func__, (void*)paddr, total_size, block_size);
         return E_INVAL;
     }
 
-    if ((u32)(paddr + total_size) > PMM_KERNEL_WINDOW_LIMIT) {
+    if (!u32_range_within(paddr, total_size, 0, PMM_KERNEL_WINDOW_LIMIT)) {
         log_err("%s: physical range(%p): ends outside the kernel window (limit 0x%x)\n",
                 __func__, (void*)paddr, PMM_KERNEL_WINDOW_LIMIT);
         return E_INVAL;
@@ -77,8 +78,8 @@ int pmm_create_space(u32 paddr, u32 total_size, u32 block_size, pmm_space** out)
     eflags = spinlock_lock_irqsave(&pmm_lock);
     list_for_each(node, &spaces) {
         other = list_entry(node, pmm_space, this_node);
-        if (paddr < other->pa_start + other->pa_total_size &&
-            other->pa_start < paddr + total_size) {
+        if (u32_ranges_overlap(paddr, total_size,
+                               other->pa_start, other->pa_total_size)) {
             spinlock_unlock_irqrestore(&pmm_lock, eflags);
             log_err("%s: physical range(%p): overlaps pmm space(%p)\n",
                     __func__, (void*)paddr, (void*)other);
@@ -206,6 +207,24 @@ int pmm_alloc_blocks(pmm_space* space, u32 size, u32* out_pa)
 
             found_blocks++;
             if (found_blocks >= alloc_blocks) {
+                u32 offset = 0;
+                u32 pa = 0;
+                u32 size_bytes = 0;
+
+                /*
+                 * pmm_create_space() keeps every space inside the kernel
+                 * window, so this cannot fail; still compute the range with
+                 * the checked helpers instead of open-coded arithmetic.
+                 */
+                if (!u32_mul_checked(start_block, space->block_size, &offset) ||
+                    !u32_mul_checked(alloc_blocks, space->block_size, &size_bytes) ||
+                    !u32_add_checked(space->pa_start, offset, &pa)) {
+                    spinlock_unlock_irqrestore(&pmm_lock, eflags);
+                    log_err("%s: pmm space(%p): block %u range overflow\n",
+                            __func__, (void*)space, start_block);
+                    return E_OVERFLOW;
+                }
+
                 for (u32 j = start_block; j < start_block + alloc_blocks; j++) {
                     /* a block the bitmap reports free must start at zero */
                     if (space->refsmap[j] != 0) {
@@ -223,11 +242,9 @@ int pmm_alloc_blocks(pmm_space* space, u32 size, u32* out_pa)
                     space->refsmap[j] = 1;
                 }
 
-                /* pa_start is physical; pa_to_va reaches it through the
-                 * kernel high window (the first 256 MiB of RAM). */
-                memset(pa_to_va(space->pa_start + start_block * space->block_size),
-                       0, alloc_blocks * space->block_size);
-                *out_pa = start_block * space->block_size + space->pa_start;
+                /* pa_to_va reaches the space through the kernel high window */
+                memset(pa_to_va(pa), 0, size_bytes);
+                *out_pa = pa;
                 spinlock_unlock_irqrestore(&pmm_lock, eflags);
                 return 0;
             }
@@ -255,20 +272,19 @@ int pmm_ref_blocks(pmm_space* space, u32 pa, u32 size)
         return E_NODEV;
     }
 
-    u32 off  = pa - space->pa_start;
-    if (pa < space->pa_start || off >= space->pa_total_size ||
-        off % space->block_size) {
+    if (!u32_range_contains(space->pa_start, space->pa_total_size, pa) ||
+        ((pa - space->pa_start) % space->block_size)) {
         spinlock_unlock_irqrestore(&pmm_lock, eflags);
         log_err("%s: pmm space(%p): ref pa(%p) size(0x%x) outside space\n",
                 __func__, (void*)space, (void*)pa, size);
         return E_INVAL;
     }
 
-    u32 start_block_nr = off / space->block_size;
+    u32 start_block_nr = (pa - space->pa_start) / space->block_size;
     u32 ref_blocks = bitmap_block_count(size, space->block_size);
     u32 total_blocks = bitmap_block_count(space->pa_total_size, space->block_size);
 
-    if (ref_blocks > total_blocks - start_block_nr) {
+    if (!u32_range_within(start_block_nr, ref_blocks, 0, total_blocks)) {
         spinlock_unlock_irqrestore(&pmm_lock, eflags);
         log_err("%s: pmm space(%p): ref pa(%p) size(0x%x) out of range\n",
                 __func__, (void*)space, (void*)pa, size);
@@ -314,21 +330,20 @@ int pmm_free_blocks(pmm_space* space, u32 pa, u32 size)
         return E_NODEV;
     }
 
-    u32 off  = pa - space->pa_start;
-    if (pa < space->pa_start || off >= space->pa_total_size ||
-        off % space->block_size) {
+    if (!u32_range_contains(space->pa_start, space->pa_total_size, pa) ||
+        ((pa - space->pa_start) % space->block_size)) {
         spinlock_unlock_irqrestore(&pmm_lock, eflags);
         log_err("%s: pmm space(%p): free pa(%p) size(0x%x) outside space\n",
                 __func__, (void*)space, (void*)pa, size);
         return E_INVAL;
     }
 
-    u32 start_block_nr = off / space->block_size;
+    u32 start_block_nr = (pa - space->pa_start) / space->block_size;
     u32 requested_blocks = bitmap_block_count(size, space->block_size);
     u32 free_blocks = requested_blocks;
     u32 total_blocks = bitmap_block_count(space->pa_total_size, space->block_size);
 
-    if (free_blocks > total_blocks - start_block_nr) {
+    if (!u32_range_within(start_block_nr, free_blocks, 0, total_blocks)) {
         log_err("%s: pmm space(%p): free pa(%p) size(0x%x) out of range\n",
                 __func__, (void*)space, (void*)pa, size);
         return E_INVAL;
